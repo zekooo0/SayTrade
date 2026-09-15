@@ -18,10 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.domain.errors import (
     JournalEntryNotFoundError,
     StorageUnavailableError,
+    TradeNotFoundError,
     WrongJournalStateError,
 )
 from app.billing.entitlements import Entitlements
-from app.models import JournalEntry, User
+from app.models import JournalEntry, Trade, User
 from app.providers.extraction import Extractor
 from app.providers.storage import AudioStorage
 from app.providers.transcription import Transcriber
@@ -65,6 +66,7 @@ async def receive_journal(
     duration_ms: int,
     storage: AudioStorage,
     entitlements: Entitlements,
+    trade_id: uuid.UUID | None = None,
     now: datetime | None = None,
 ) -> JournalEntryView:
     """Reserve one allowance unit, persist the RECEIVED row, store the audio.
@@ -73,12 +75,24 @@ async def receive_journal(
     after the commit (network call outside the row lock); if it fails the
     entry is marked FAILED(STORAGE) and the unit is refunded — retry cannot
     recover an upload that never landed, so the client must re-record.
+
+    `trade_id` is the "recording from an active Trade screen" context (spec:
+    resolving later notes). Ownership is verified here, and the id is stored
+    on the entry so the extractor (and the retry path) knows which Trade the
+    note refers to — the LLM never guesses ids.
     """
     now = now or datetime.now(timezone.utc)
+    if trade_id is not None:
+        owned = await session.scalar(
+            select(Trade).where(Trade.id == trade_id, Trade.user_id == user.id)
+        )
+        if owned is None:
+            raise TradeNotFoundError("Trade not found")
     key = new_storage_key(user.id, mime_type)
     entry = JournalEntry(
         user_id=user.id,
         status=STATUS_RECEIVED,
+        trade_id=trade_id,
         audio_storage_key=key,
         mime_type=mime_type,
         duration_ms=duration_ms,
@@ -117,6 +131,22 @@ async def _mark_failed(
     await session.commit()
 
 
+async def _extraction_context(
+    session: AsyncSession, entry: JournalEntry
+) -> tuple[str, str] | None:
+    """The Trade the note was recorded against (from the active-Trade screen),
+    as (id, symbol) context for the extractor — the LLM uses it verbatim and
+    never invents ids."""
+    if entry.trade_id is None:
+        return None
+    trade = await session.scalar(
+        select(Trade).where(Trade.id == entry.trade_id, Trade.user_id == entry.user_id)
+    )
+    if trade is None:
+        return None
+    return str(trade.id), trade.symbol
+
+
 async def process_entry(
     entry_id: UUID,
     storage: AudioStorage,
@@ -147,7 +177,9 @@ async def process_entry(
 
             if entry.status != STATUS_EXTRACTED:
                 result = await extractor.extract(
-                    entry.transcript, recorded_at=entry.created_at
+                    entry.transcript,
+                    recorded_at=entry.created_at,
+                    active_trade=await _extraction_context(session, entry),
                 )
                 entry.proposal = {"actions": result.actions}
                 entry.extraction_provider = result.provider
@@ -202,7 +234,9 @@ async def retry_journal(
 
         if entry.status != STATUS_EXTRACTED:
             result = await extractor.extract(
-                entry.transcript, recorded_at=entry.created_at
+                entry.transcript,
+                recorded_at=entry.created_at,
+                active_trade=await _extraction_context(session, entry),
             )
             entry.proposal = {"actions": result.actions}
             entry.extraction_provider = result.provider

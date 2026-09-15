@@ -60,7 +60,10 @@ class ExtractionResult:
 
 class Extractor(Protocol):
     async def extract(
-        self, transcript: str, recorded_at: datetime | None = None
+        self,
+        transcript: str,
+        recorded_at: datetime | None = None,
+        active_trade: tuple[str, str] | None = None,
     ) -> ExtractionResult: ...
 
 
@@ -83,16 +86,30 @@ class OpenAIExtractor:
         return OpenAI(api_key=self.api_key)
 
     async def extract(
-        self, transcript: str, recorded_at: datetime | None = None
+        self,
+        transcript: str,
+        recorded_at: datetime | None = None,
+        active_trade: tuple[str, str] | None = None,
     ) -> ExtractionResult:
         client = self._client()
-        # The recording time is a KNOWN fact; seed it so the model never
-        # invents a date when the trader states none (prompt rule 1).
+        # Facts we KNOW — seed them so the model never invents:
+        #  - the recording time (opened_at/executed_at when unstated)
+        #  - the Trade the note was recorded against (the id goes into the
+        #    payload verbatim; the sentinel would be a dead end)
         context = transcript
         if recorded_at is not None:
             context += (
                 f"\n\nRecording timestamp (UTC): {recorded_at.isoformat()}."
                 " Use it for any times the trader did not state."
+            )
+        if active_trade is not None:
+            trade_id, symbol = active_trade
+            context += (
+                f"\n\nActive Trade context: id={trade_id}, symbol={symbol} (the "
+                "Trade the user is recording this note from). When the trader "
+                f"refers to 'the trade' or 'the position', use trade_id "
+                f"'{trade_id}' VERBATIM in every action — never invent another "
+                "id and never use the CURRENT_ACTIVE_TRADE placeholder."
             )
 
         def _call(user_content: str):

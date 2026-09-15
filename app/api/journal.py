@@ -38,6 +38,10 @@ async def receive(
     background: BackgroundTasks,
     file: UploadFile = File(...),
     duration_ms: int = Form(...),
+    # "Recording from an active Trade screen" context (spec: resolving later
+    # notes). Ownership is verified by the service; the extractor uses this id
+    # verbatim instead of inventing or sentinel-marking it.
+    trade_id: UUID | None = Form(default=None),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_user),
 ):
@@ -73,6 +77,7 @@ async def receive(
             duration_ms,
             request.app.state.storage,
             entitlements,
+            trade_id=trade_id,
         )
     except DomainError as exc:
         _raise_http(exc)

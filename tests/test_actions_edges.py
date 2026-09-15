@@ -186,6 +186,34 @@ def test_sentinel_without_active_trade_rejected(client):
     assert "no open Trade" in resp.json()["detail"]
 
 
+def test_receive_with_trade_context_links_and_validates(client):
+    """Recording from an active Trade screen: trade_id travels with the note,
+    ownership is verified up front, and the entry is pre-linked."""
+    mine = client.post(
+        "/trades/manual", headers=auth_headers(), json=DEFAULT_ACTIONS
+    ).json()
+    trade_id = mine["created_trade_id"]
+    resp = client.post(
+        "/journal",
+        headers=auth_headers(),
+        files={"file": ("n.m4a", b"audio-context-bytes", "audio/mp4")},
+        data={"duration_ms": "5000", "trade_id": trade_id},
+    )
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["trade_id"] == trade_id
+    # someone else's trade id must not become a note context
+    theirs = client.post(
+        "/trades/manual", headers=auth_headers("user_mallory"), json=DEFAULT_ACTIONS
+    ).json()
+    foreign = client.post(
+        "/journal",
+        headers=auth_headers(),
+        files={"file": ("n.m4a", b"audio-context-bytes", "audio/mp4")},
+        data={"duration_ms": "5000", "trade_id": theirs["created_trade_id"]},
+    )
+    assert foreign.status_code == 404
+
+
 def test_approve_only_from_extracted(client):
     # a FAILED entry (broken extractor) must not be approvable
     entry = receive_failed_entry(client)
