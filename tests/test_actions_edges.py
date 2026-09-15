@@ -146,6 +146,46 @@ def test_one_outcome_per_trade(client):
     ).status_code == 409
 
 
+def test_current_active_trade_sentinel_resolves(client):
+    """The extractor never invents ids: 'CURRENT_ACTIVE_TRADE' must resolve to
+    the user's most recent ACTIVE trade, backend-verified (spec: resolving
+    later notes)."""
+    first = client.post(
+        "/trades/manual", headers=auth_headers(), json=DEFAULT_ACTIONS
+    ).json()
+    trade_id = first["created_trade_id"]
+    resp = client.post(
+        "/trades/manual",
+        headers=auth_headers(),
+        json={
+            "actions": [
+                {"action": "ADD_EXECUTION", "trade_id": "CURRENT_ACTIVE_TRADE",
+                 "side": "SELL", "quantity": "30", "price": "129.5",
+                 "executed_at": "2026-09-15T11:00:00Z"}
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    detail = client.get(f"/trades/{trade_id}", headers=auth_headers()).json()
+    assert len(detail["executions"]) == 2
+    assert detail["executions"][1]["quantity"] == "30"
+
+
+def test_sentinel_without_active_trade_rejected(client):
+    resp = client.post(
+        "/trades/manual",
+        headers=auth_headers(),
+        json={
+            "actions": [
+                {"action": "CHANGE_STOP", "trade_id": "CURRENT_ACTIVE_TRADE",
+                 "new_value": "110", "reason": "tighter stop"}
+            ]
+        },
+    )
+    assert resp.status_code == 422
+    assert "no open Trade" in resp.json()["detail"]
+
+
 def test_approve_only_from_extracted(client):
     # a FAILED entry (broken extractor) must not be approvable
     entry = receive_failed_entry(client)

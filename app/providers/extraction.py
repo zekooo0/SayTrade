@@ -46,6 +46,7 @@ STRICT RULES (from the product spec — violations are failures):
 10. Never infer Type 1-4 — only emit `type` when the trader states it.
 11. Never create a Trade for an opportunity the trader observed but did not enter. "I'm watching it" is not CREATE_TRADE.
 12. "I'm completely out" / "closed it" / "finished" with no additions => COMPLETE_TRADE (completed_at = the time the trader said it, else recording time).
+13. Partial position reductions — "I sold/took off/cut X% of the position", "still holding the rest" — are ADD_EXECUTION with side SELL (quantity = the reduced amount). They are NOT CHANGE_STOP or CHANGE_TARGET and never COMPLETE the Trade.
 
 The output must be valid JSON that parses without errors."""
 

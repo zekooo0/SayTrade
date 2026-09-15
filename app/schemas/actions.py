@@ -36,6 +36,16 @@ PATTERNS = frozenset(
     }
 )
 
+# The extractor never invents IDs. When the note refers to "the same trade"
+# without an id, it emits this sentinel and the BACKEND resolves it to the
+# user's most recent ACTIVE trade (spec: "resolving later notes" — the backend
+# verifies ownership; the client never supplies a trusted id).
+CURRENT_ACTIVE_TRADE = "CURRENT_ACTIVE_TRADE"
+
+# Literal must reference the string constant literally for pyright; the
+# runtime constant above is used for comparisons.
+TradeRef = UUID | Literal["CURRENT_ACTIVE_TRADE"]
+
 
 class ExecutionSpec(BaseModel):
     # Nullable at PROPOSAL for ambiguous notes ("I bought more" has no
@@ -88,7 +98,7 @@ class CreateTradeAction(BaseModel):
 
 class AddExecutionAction(BaseModel):
     action: Literal["ADD_EXECUTION"] = "ADD_EXECUTION"
-    trade_id: UUID
+    trade_id: TradeRef
     # Nullable at PROPOSAL like the entry fill above; enforced at approval.
     side: Literal["BUY", "SELL"] | None = None
     quantity: Decimal | None = Field(default=None, gt=0)
@@ -98,7 +108,7 @@ class AddExecutionAction(BaseModel):
 
 
 class _ChangeManagementAction(BaseModel):
-    trade_id: UUID
+    trade_id: TradeRef
     new_value: Decimal = Field(gt=0)
     # Sent by the client for conflict detection; if absent, the backend stores
     # the derived pre-change value as history.
@@ -116,7 +126,7 @@ class ChangeTargetAction(_ChangeManagementAction):
 
 class AddOutcomeAction(BaseModel):
     action: Literal["ADD_OUTCOME"] = "ADD_OUTCOME"
-    trade_id: UUID
+    trade_id: TradeRef
     result: Literal["WIN", "LOSS", "BREAKEVEN"]
     # Trader-declared Type 1-4; never inferred from executions.
     type: int | None = Field(default=None, ge=1, le=4)
@@ -126,7 +136,7 @@ class AddOutcomeAction(BaseModel):
 
 class CompleteTradeAction(BaseModel):
     action: Literal["COMPLETE_TRADE"] = "COMPLETE_TRADE"
-    trade_id: UUID
+    trade_id: TradeRef
     completed_at: datetime
 
 
