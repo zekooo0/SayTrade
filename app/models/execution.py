@@ -6,6 +6,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
@@ -21,24 +22,24 @@ SIDES = ("BUY", "SELL")
 
 
 class Execution(Base):
-    """A single fill: something actually bought or sold against an opportunity.
+    """A single fill: something actually bought or sold against a Trade.
 
-    Append-only by design: there is no updated_at, because a fill is a record of
+    Append-only by design: no updated_at, because a fill is a record of
     something that happened and should not be edited in place.
+
+    Whether a BUY/SELL increases or decreases the position depends on the
+    Trade direction (LONG vs SHORT); the spec puts that validation in the
+    backend, not in a row-level CHECK.
     """
 
     __tablename__ = "executions"
 
     __table_args__ = (
-        CheckConstraint(
-            "side IN ('BUY', 'SELL')",
-            name="ck_executions_side",
-        ),
         CheckConstraint("quantity > 0", name="ck_executions_quantity_positive"),
         CheckConstraint("price > 0", name="ck_executions_price_positive"),
-        # No ondelete on the FK, so the foreign key behaves as Postgres defaults:
-        # deleting an opportunity that still has executions is refused, not
-        # cascaded. Nothing is silently destroyed.
+        Index("ix_executions_trade_id", "trade_id"),
+        # No ondelete on the FK, so deleting a Trade that still has executions
+        # is refused, not cascaded. Nothing is silently destroyed.
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -47,9 +48,9 @@ class Execution(Base):
         server_default=text("uuidv7()"),
     )
 
-    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+    trade_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("opportunities.id"),
+        ForeignKey("trades.id"),
         nullable=False,
     )
 

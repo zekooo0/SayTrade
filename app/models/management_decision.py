@@ -5,6 +5,7 @@ from decimal import Decimal
 from sqlalchemy import (
     DateTime,
     ForeignKey,
+    Index,
     Numeric,
     String,
     Text,
@@ -16,19 +17,22 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db import Base
 
+DECISION_TYPES = ("STOP_LOSS_CHANGE", "TARGET_CHANGE")
+
 
 class ManagementDecision(Base):
     """A trade-management decision: what the trader changed and why.
 
-    Append-only like executions: no updated_at, because the record is the point.
-    `type` is deliberately unconstrained - the allowed set has not been defined,
-    so a CHECK here would be guessing at the domain.
+    Append-only like executions: no updated_at, because the record is the
+    point. The allowed type vocabulary is API-layer, matching the spec's
+    stance on controlled vocabularies.
     """
 
     __tablename__ = "management_decisions"
 
     __table_args__ = (
-        # No ondelete on the FK, so Postgres defaults apply: an opportunity that
+        Index("ix_management_decisions_trade_id", "trade_id"),
+        # No ondelete on the FK, so Postgres defaults apply: a Trade that
         # still has decisions attached cannot be deleted.
     )
 
@@ -38,16 +42,16 @@ class ManagementDecision(Base):
         server_default=text("uuidv7()"),
     )
 
-    opportunity_id: Mapped[uuid.UUID] = mapped_column(
+    trade_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True),
-        ForeignKey("opportunities.id"),
+        ForeignKey("trades.id"),
         nullable=False,
     )
 
     type: Mapped[str] = mapped_column(String(30), nullable=False)
 
-    # Nullable: old_value is empty the first time something is set, and both are
-    # empty if the decision is not numeric (e.g. a status change).
+    # Nullable: old_value is empty the first time a parameter is set
+    # (e.g. a stop where none existed before). Both are price-per-share values.
     old_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     new_value: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
 
