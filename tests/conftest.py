@@ -132,7 +132,7 @@ class FakeExtractor:
         self.actions = actions or DEFAULT_ACTIONS
         self.fail = False
 
-    async def extract(self, transcript: str) -> ExtractionResult:
+    async def extract(self, transcript: str, recorded_at=None) -> ExtractionResult:
         if self.fail:
             raise RuntimeError("simulated extraction outage")
         return ExtractionResult(
