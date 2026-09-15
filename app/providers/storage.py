@@ -63,14 +63,16 @@ class CloudinaryStorage:
             api_secret=self.api_secret,
             secure=True,
         )
-        ext = extension_for(mime_type)
 
         def _upload() -> None:
+            # No `format` argument and no extension in the key: Cloudinary
+            # infers the format from the bytes and the public_id stays exactly
+            # `key`. Passing both produced `<key>.webm.webm` on delivery — a URL
+            # mismatch that broke reads.
             result = upload(
                 data,
                 public_id=key,
                 resource_type="video",  # audio is served under Cloudinary's video type
-                format=ext,
                 overwrite=False,  # never clobber an existing recording
             )
             if result.get("error"):
@@ -79,10 +81,38 @@ class CloudinaryStorage:
         await asyncio.to_thread(_upload)
 
     async def read(self, key: str) -> bytes:
-        url = await self.url(key)
+        url = await self._authoritative_url(key)
         return await asyncio.to_thread(
             lambda: urllib.request.urlopen(url, timeout=30).read()  # noqa: S310 - storage URL is our own
         )
+
+    async def _authoritative_url(self, key: str) -> str:
+        """Resolve the real delivery URL via the Cloudinary API.
+
+        Deriving the URL from the key alone is guesswork (format/version
+        suffixes); asking the API is authoritative and also repairs assets
+        uploaded under the older key scheme. Falls back to the derived URL.
+        """
+        self._require_config()
+        import cloudinary
+        from cloudinary import api
+
+        cloudinary.config(
+            cloud_name=self.cloud_name,
+            api_key=self.api_key,
+            api_secret=self.api_secret,
+            secure=True,
+        )
+
+        def _lookup() -> str | None:
+            try:
+                resource = api.resource(key, resource_type="video")
+                return resource.get("secure_url") or resource.get("url")
+            except Exception:
+                return None
+
+        resolved = await asyncio.to_thread(_lookup)
+        return resolved or await self.url(key)
 
     async def url(self, key: str) -> str:
         self._require_config()

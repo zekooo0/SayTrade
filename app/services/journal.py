@@ -23,7 +23,7 @@ from app.domain.errors import (
 from app.billing.entitlements import Entitlements
 from app.models import JournalEntry, User
 from app.providers.extraction import Extractor
-from app.providers.storage import AudioStorage, extension_for
+from app.providers.storage import AudioStorage
 from app.providers.transcription import Transcriber
 from app.schemas.api import JournalEntryView
 
@@ -46,10 +46,15 @@ def _safe_message(exc: Exception, limit: int = 500) -> str:
 
 
 def new_storage_key(user_id: UUID, mime_type: str) -> str:
-    """Stable key, namespaced per the spec's example. Deliberately does NOT
-    embed the journal entry id: it must be known before the row exists and
-    must never change afterwards."""
-    return f"voice-journal/{user_id}/{uuid.uuid4()}.{extension_for(mime_type)}"
+    """Stable key, namespaced per the spec's example.
+
+    Deliberately has NO file extension: the extension in the key AND a format
+    argument on upload made Cloudinary deliver `<key>.webm.webm`, so the URL
+    derived from the key 404'd. The format lives in the asset, not the key.
+    Deliberately does NOT embed the journal entry id either: the key must be
+    known before the row exists and must never change afterwards.
+    """
+    return f"voice-journal/{user_id}/{uuid.uuid4()}"
 
 
 async def receive_journal(
