@@ -38,18 +38,23 @@ PATTERNS = frozenset(
 
 
 class ExecutionSpec(BaseModel):
-    side: Literal["BUY", "SELL"]
-    quantity: Decimal = Field(gt=0)
-    price: Decimal = Field(gt=0)
-    executed_at: datetime
+    # Nullable at PROPOSAL for ambiguous notes ("I bought more" has no
+    # quantity); the approval service requires real values.
+    side: Literal["BUY", "SELL"] | None = None
+    quantity: Decimal | None = Field(default=None, gt=0)
+    price: Decimal | None = Field(default=None, gt=0)
+    executed_at: datetime | None = None
     reason: str | None = None
 
 
 class CreateTradeAction(BaseModel):
     action: Literal["CREATE_TRADE"] = "CREATE_TRADE"
-    symbol: str = Field(min_length=1, max_length=20)
-    direction: Literal["LONG", "SHORT"]
-    pattern: str
+    # Nullable at PROPOSAL: the extractor must never invent facts, and
+    # ambiguous notes stay editable (spec rule 7). The approval service
+    # requires these to be filled in before a Trade can be created.
+    symbol: str | None = Field(default=None, min_length=1, max_length=20)
+    direction: Literal["LONG", "SHORT"] | None = None
+    pattern: str | None = None
     opened_at: datetime
     # The initial fill(s): creating a Trade without an actual execution is
     # impossible (the MVP only journals trades that were actually entered).
@@ -60,7 +65,9 @@ class CreateTradeAction(BaseModel):
 
     @field_validator("symbol")
     @classmethod
-    def normalize_symbol(cls, v: str) -> str:
+    def normalize_symbol(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         v = v.strip().upper()
         if not v:
             raise ValueError("symbol must not be empty")
@@ -68,7 +75,9 @@ class CreateTradeAction(BaseModel):
 
     @field_validator("pattern")
     @classmethod
-    def pattern_must_be_supported(cls, v: str) -> str:
+    def pattern_must_be_supported(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         v = v.strip().upper()
         if v not in PATTERNS:
             raise ValueError(
@@ -80,10 +89,11 @@ class CreateTradeAction(BaseModel):
 class AddExecutionAction(BaseModel):
     action: Literal["ADD_EXECUTION"] = "ADD_EXECUTION"
     trade_id: UUID
-    side: Literal["BUY", "SELL"]
-    quantity: Decimal = Field(gt=0)
-    price: Decimal = Field(gt=0)
-    executed_at: datetime
+    # Nullable at PROPOSAL like the entry fill above; enforced at approval.
+    side: Literal["BUY", "SELL"] | None = None
+    quantity: Decimal | None = Field(default=None, gt=0)
+    price: Decimal | None = Field(default=None, gt=0)
+    executed_at: datetime | None = None
     reason: str | None = None
 
 

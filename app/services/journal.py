@@ -146,7 +146,9 @@ async def process_entry(
                 await session.commit()
 
             if entry.status != STATUS_EXTRACTED:
-                result = await extractor.extract(entry.transcript)
+                result = await extractor.extract(
+                    entry.transcript, recorded_at=entry.created_at
+                )
                 entry.proposal = {"actions": result.actions}
                 entry.extraction_provider = result.provider
                 entry.extraction_model = result.model
@@ -199,7 +201,9 @@ async def retry_journal(
             await session.commit()
 
         if entry.status != STATUS_EXTRACTED:
-            result = await extractor.extract(entry.transcript)
+            result = await extractor.extract(
+                entry.transcript, recorded_at=entry.created_at
+            )
             entry.proposal = {"actions": result.actions}
             entry.extraction_provider = result.provider
             entry.extraction_model = result.model

@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain import management as mgmt
 from app.domain import pnl, position
 from app.domain.errors import (
+    DomainError,
     JournalEntryNotFoundError,
     MultiTradeNoteError,
     OutcomeExistsError,
@@ -119,6 +120,18 @@ def _referenced_trade_ids(payload: ActionsPayload) -> set[UUID]:
     return ids
 
 
+def _require_complete(*args) -> None:
+    """Create a friendly 422 naming the missing field. The proposal may carry
+    nulls (the AI never invents facts); a Trade cannot be created until the
+    trader fills them at review."""
+    for value, label in args:
+        if value is None:
+            raise DomainError(
+                f"{label} is required to complete this trade — fill it in at "
+                "review and approve again"
+            )
+
+
 async def apply_approved_actions(
     session: AsyncSession,
     user: User,
@@ -180,8 +193,19 @@ async def apply_approved_actions(
         if isinstance(action, CreateTradeAction):
             created = created_trade
             assert created is not None  # set in the pre-pass above
+            _require_complete(
+                (action.symbol, "symbol"),
+                (action.direction, "direction"),
+                (action.pattern, "pattern (choose one of the supported chart patterns)"),
+            )
             state = state_by_trade[created.id]
             for spec in action.executions:
+                _require_complete(
+                    (spec.side, "execution side"),
+                    (spec.quantity, "execution quantity"),
+                    (spec.price, "execution price"),
+                    (spec.executed_at, "execution time"),
+                )
                 state.position = position.apply_execution(
                     state.position, created.direction, spec.side, spec.quantity
                 )
@@ -201,6 +225,12 @@ async def apply_approved_actions(
             if not state.executions:
                 await _load_trade_state(session, state)
             _require_active(state, "execution")
+            _require_complete(
+                (action.side, "execution side"),
+                (action.quantity, "execution quantity"),
+                (action.price, "execution price"),
+                (action.executed_at, "execution time"),
+            )
             state.position = position.apply_execution(
                 state.position, state.trade.direction, action.side, action.quantity
             )

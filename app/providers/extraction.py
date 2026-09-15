@@ -2,13 +2,20 @@
 
 The extractor returns ACTIONS (never database objects) and its output must
 parse into the ActionsPayload schema or the stage fails. The schema is
-single-sourced from app.schemas.actions, so the LLM's JSON contract can never
+single-sourced from app.schemas.actions, so the extraction contract can never
 drift from the approval contract.
+
+JSON mode (not OpenAI "structured outputs" strict mode): gpt-4o-mini's
+strict-schema path rejects/starves on complex discriminated unions
+(finish_reason=length with 0 tokens), so we use plain json_object mode with
+one automatic retry and keep Pydantic re-validation as the hard boundary
+between the LLM and the domain.
 """
 
 import asyncio
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Protocol
 
 from app.schemas.actions import ActionsPayload, PATTERNS
@@ -38,7 +45,9 @@ STRICT RULES (from the product spec — violations are failures):
 9. Never infer WIN/LOSS/BREAKEVEN from P&L. Only ADD_OUTCOME when the trader explicitly declares how it finished.
 10. Never infer Type 1-4 — only emit `type` when the trader states it.
 11. Never create a Trade for an opportunity the trader observed but did not enter. "I'm watching it" is not CREATE_TRADE.
-12. "I'm completely out" / "closed it" / "finished" with no additions => COMPLETE_TRADE (completed_at = the time the trader said it, else recording time)."""
+12. "I'm completely out" / "closed it" / "finished" with no additions => COMPLETE_TRADE (completed_at = the time the trader said it, else recording time).
+
+The output must be valid JSON that parses without errors."""
 
 
 @dataclass
@@ -49,15 +58,16 @@ class ExtractionResult:
 
 
 class Extractor(Protocol):
-    async def extract(self, transcript: str) -> ExtractionResult: ...
+    async def extract(
+        self, transcript: str, recorded_at: datetime | None = None
+    ) -> ExtractionResult: ...
 
 
 class OpenAIExtractor:
-    """Structured-output extraction with gpt-4o-mini.
+    """gpt-4o-mini extraction in json_object mode, double-checked by Pydantic.
 
-    The JSON schema is generated from the Pydantic contract
-    (ActionsPayload.model_json_schema), so the model output is shape-checked
-    twice: once by OpenAI's structured outputs, once by Pydantic.
+    The output MUST parse into ActionsPayload or the stage fails (the AI never
+    writes directly). One retry absorbs the occasional malformed emission.
     """
 
     def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
@@ -71,43 +81,56 @@ class OpenAIExtractor:
             raise RuntimeError("OpenAI is not configured (OPENAI_API_KEY)")
         return OpenAI(api_key=self.api_key)
 
-    async def extract(self, transcript: str) -> ExtractionResult:
+    async def extract(
+        self, transcript: str, recorded_at: datetime | None = None
+    ) -> ExtractionResult:
         client = self._client()
-        json_schema = ActionsPayload.model_json_schema()
+        # The recording time is a KNOWN fact; seed it so the model never
+        # invents a date when the trader states none (prompt rule 1).
+        context = transcript
+        if recorded_at is not None:
+            context += (
+                f"\n\nRecording timestamp (UTC): {recorded_at.isoformat()}."
+                " Use it for any times the trader did not state."
+            )
 
-        def _call():
+        def _call(user_content: str):
             response = client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                    {"role": "user", "content": transcript},
+                    {"role": "user", "content": user_content},
                 ],
                 temperature=0,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "approved_actions",
-                        "strict": True,
-                        "schema": json_schema,
-                    },
-                },
+                response_format={"type": "json_object"},
             )
             return response.choices[0].message.content
 
-        content = await asyncio.to_thread(_call)
-        if not content:
-            raise RuntimeError("extraction returned empty content")
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                content = await asyncio.to_thread(
+                    _call,
+                    context
+                    + (
+                        "\n\nYour previous output could not be parsed. "
+                        "Return ONLY a valid JSON object; nothing else."
+                        if attempt > 0
+                        else ""
+                    ),
+                )
+                if not content:
+                    raise RuntimeError("extraction returned empty content")
+                parsed = json.loads(content)
+                payload = ActionsPayload.model_validate(parsed)
+                return ExtractionResult(
+                    actions=payload.model_dump(mode="json")["actions"],
+                    provider="openai",
+                    model=self.model,
+                )
+            except (json.JSONDecodeError, RuntimeError, ValueError) as exc:
+                last_error = exc
 
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError("extraction returned invalid JSON") from exc
-
-        # Pydantic re-validation: the trust boundary between the LLM and the
-        # domain (the AI never writes directly; malformed output fails here).
-        payload = ActionsPayload.model_validate(parsed)
-        return ExtractionResult(
-            actions=payload.model_dump(mode="json")["actions"],
-            provider="openai",
-            model=self.model,
-        )
+        raise RuntimeError(
+            f"extraction failed after retry: {last_error}"
+        ) from last_error
