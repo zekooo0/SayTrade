@@ -1,59 +1,74 @@
-"""Extraction boundary: transcript -> structured actions.
-
-The extractor returns ACTIONS (never database objects) and its output must
-parse into the ActionsPayload schema or the stage fails. The schema is
-single-sourced from app.schemas.actions, so the extraction contract can never
-drift from the approval contract.
+"""Extraction boundary: the trader's words in, a proposed change list out.
 
 JSON mode (not OpenAI "structured outputs" strict mode): gpt-4o-mini's
-strict-schema path rejects/starves on complex discriminated unions
-(finish_reason=length with 0 tokens), so we use plain json_object mode with
-one automatic retry and keep Pydantic re-validation as the hard boundary
-between the LLM and the domain.
+strict-schema path rejects or starves on complex shapes, so we use plain
+json_object mode with one automatic retry and keep Pydantic re-validation as
+the hard boundary between the model and the domain.
+
+The model is told what we already know (the recording time, the trade the note
+was recorded against) so it never has to invent those facts.
 """
 
 import asyncio
 import json
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Any, Protocol
 
-from app.schemas.actions import ActionsPayload, PATTERNS
+from pydantic import ValidationError
 
-EXTRACTION_SYSTEM_PROMPT = f"""You extract structured trading actions from a trader's voice-journal transcript.
+from app.schemas.proposal import NoteProposal
 
-Return ONLY a JSON object of the form {{"actions": [...]}}, one entry per action, in the order the trader said them. Each action object has an "action" field with exactly one of these values:
+EXTRACTION_SYSTEM_PROMPT = """You read one spoken trade note from a trader (English or Arabic) and return the position changes it holds.
 
-- CREATE_TRADE: symbol (ticker, uppercase), direction ("LONG"/"SHORT"), pattern (code from the supported list below), opened_at (ISO-8601 UTC; if the trader gives no time, use the recording time), executions: at least one {{side, quantity, price, executed_at, reason?}}, optional rationale, failure_point, target_price (all prices > 0).
-- ADD_EXECUTION: trade_id (see rule 3 below), side, quantity, price, executed_at, optional reason.
-- CHANGE_STOP: trade_id, new_value, optional old_value, reason (required — why the trader moved it).
-- CHANGE_TARGET: trade_id, new_value, optional old_value, reason (required).
-- ADD_OUTCOME: trade_id, result ("WIN"/"LOSS"/"BREAKEVEN"), optional type (integer 1-4), lesson, notes.
-- COMPLETE_TRADE: trade_id, completed_at.
+The trader is LONG ONLY. They buy shares and they sell shares. There are no short sales, ever.
 
-Supported pattern codes (use exactly these): {", ".join(sorted(PATTERNS))}.
+Return ONE JSON object with exactly these keys:
 
-STRICT RULES (from the product spec — violations are failures):
-1. Never invent facts. If the trader did not say it, leave the field null/omitted.
-2. Distinguish actual executions from intentions. "I'm thinking of adding" is not an execution.
-3. Never invent trade_id values. Only include trade_id when the trader references an existing trade by context (e.g. "the same trade"), and mark it "CURRENT_ACTIVE_TRADE" when the backend context tells you which trade is active. Never guess an id string.
-4. Distinguish the original plan from later management: the first mention is CREATE_TRADE; later stop/target moves are CHANGE_STOP/CHANGE_TARGET.
-5. Distinguish pattern (what the trader saw, e.g. cup and handle -> CUP_AND_HANDLE) from Type 1-4 (what happened after the breakout, an integer) — they are different fields on different actions.
-6. Preserve spoken quantities, prices, dates and times exactly; compute nothing.
-7. Mark ambiguity instead of guessing: if "I bought more" has no quantity, emit the action with quantity null/omitted — never invent a number.
-8. Keep actions in spoken order; do not reorder or dedupe.
-9. Never infer WIN/LOSS/BREAKEVEN from P&L. Only ADD_OUTCOME when the trader explicitly declares how it finished.
-10. Never infer Type 1-4 — only emit `type` when the trader states it.
-11. Never create a Trade for an opportunity the trader observed but did not enter. "I'm watching it" is not CREATE_TRADE.
-12. "I'm completely out" / "closed it" / "finished" with no additions => COMPLETE_TRADE (completed_at = the time the trader said it, else recording time).
-13. Partial position reductions — "I sold/took off/cut X% of the position", "still holding the rest" — are ADD_EXECUTION with side SELL (quantity = the reduced amount). They are NOT CHANGE_STOP or CHANGE_TARGET and never COMPLETE the Trade.
+{
+  "summary": "<one short line saying what happened. Write it in the SAME language as the note: an English note gets an English summary, an Arabic note gets an Arabic summary.>",
+  "symbol": "<ticker, e.g. NVDA, or null>",
+  "changes": [
+    {
+      "kind": "OPEN | ADD | TRIM | STOP | TARGET | CLOSE",
+      "occurred_at": null,
+      "shares": null,
+      "price": null,
+      "stop": null,
+      "target": null,
+      "fraction": null
+    }
+  ]
+}
 
-The output must be valid JSON that parses without errors."""
+The six kinds:
+- OPEN   the first buy that opens a new position. Needs shares and price. Add stop and target when the trader states them.
+- ADD    buy more of the same position. Needs shares and price.
+- TRIM   sell part of the position. Needs shares, OR fraction when the trader gives a share of the position instead of a number (0.5 for "half", 0.3 for "30%"). Add price when stated.
+- STOP   move the stop of the trade. Needs stop.
+- TARGET move the target of the trade. Needs target.
+- CLOSE  sell everything still held and close the trade. Add price when stated.
+
+Rules. A broken rule is a failed extraction:
+1. Never invent a value. If the trader did not give it, leave it null. The review screen asks for it later.
+2. Never do arithmetic. For "half", "a third", "30% of my position" use fraction (0.5, 0.3333, 0.3). The backend computes the shares from the real position.
+3. One note can hold several changes ("I sold half and moved the stop to 9.5"). Keep them in spoken order.
+4. A note with no change is valid: use an empty changes list. Example: "I saw a reverse candle, I will wait for tomorrow."
+5. symbol only when the trader names the instrument. Use the market ticker: "Nvidia" -> NVDA, "اموك" -> AMOC. Use null when the trader does not name it.
+6. A stop that applies to one added part only ("the stop for this part is 10.5") is NOT a change and NOT a STOP. Leave stop null on the ADD. That part stop stays in the trader's own words.
+7. occurred_at only when the trader states a time ("yesterday", "this morning"): ISO 8601, using the recording date for relative words. If no recording timestamp is given, leave occurred_at null. NEVER invent a date.
+8. "I sold all", "I am out", "I closed it" with no amount means CLOSE.
+9. Never infer a pattern, a reason, a result, or an emotion. The trader's words are the record.
+10. Keep every number exactly as spoken. 129.5 stays 129.5.
+11. The summary language MUST match the note language. English note -> English summary. Arabic note -> Arabic summary. Never answer an English note in Arabic.
+
+Return only the JSON object. No markdown, no commentary."""
 
 
 @dataclass
 class ExtractionResult:
-    actions: list[dict]
+    proposal: dict[str, Any]
+    summary: str | None
     provider: str
     model: str
 
@@ -68,10 +83,10 @@ class Extractor(Protocol):
 
 
 class OpenAIExtractor:
-    """gpt-4o-mini extraction in json_object mode, double-checked by Pydantic.
+    """OpenAI chat completions in json_object mode, double-checked by Pydantic.
 
-    The output MUST parse into ActionsPayload or the stage fails (the AI never
-    writes directly). One retry absorbs the occasional malformed emission.
+    The output MUST parse into NoteProposal or the stage fails. The model never
+    writes to the database.
     """
 
     def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
@@ -92,27 +107,21 @@ class OpenAIExtractor:
         active_trade: tuple[str, str] | None = None,
     ) -> ExtractionResult:
         client = self._client()
-        # Facts we KNOW — seed them so the model never invents:
-        #  - the recording time (opened_at/executed_at when unstated)
-        #  - the Trade the note was recorded against (the id goes into the
-        #    payload verbatim; the sentinel would be a dead end)
+
         context = transcript
         if recorded_at is not None:
             context += (
                 f"\n\nRecording timestamp (UTC): {recorded_at.isoformat()}."
-                " Use it for any times the trader did not state."
+                " Use it for any time the trader did not state."
             )
         if active_trade is not None:
             trade_id, symbol = active_trade
             context += (
-                f"\n\nActive Trade context: id={trade_id}, symbol={symbol} (the "
-                "Trade the user is recording this note from). When the trader "
-                f"refers to 'the trade' or 'the position', use trade_id "
-                f"'{trade_id}' VERBATIM in every action — never invent another "
-                "id and never use the CURRENT_ACTIVE_TRADE placeholder."
+                f"\n\nThe trader is recording this note from their open {symbol} "
+                f"trade (id {trade_id}). The note is about that trade."
             )
 
-        def _call(user_content: str):
+        def _call(user_content: str) -> str:
             response = client.chat.completions.create(
                 model=self.model,
                 messages=[
@@ -122,33 +131,31 @@ class OpenAIExtractor:
                 temperature=0,
                 response_format={"type": "json_object"},
             )
-            return response.choices[0].message.content
+            return response.choices[0].message.content or ""
 
         last_error: Exception | None = None
         for attempt in range(2):
+            content = await asyncio.to_thread(
+                _call,
+                context
+                + (
+                    "\n\nYour previous answer was not valid JSON. "
+                    "Return ONLY the JSON object."
+                    if attempt > 0
+                    else ""
+                ),
+            )
             try:
-                content = await asyncio.to_thread(
-                    _call,
-                    context
-                    + (
-                        "\n\nYour previous output could not be parsed. "
-                        "Return ONLY a valid JSON object; nothing else."
-                        if attempt > 0
-                        else ""
-                    ),
-                )
-                if not content:
-                    raise RuntimeError("extraction returned empty content")
                 parsed = json.loads(content)
-                payload = ActionsPayload.model_validate(parsed)
-                return ExtractionResult(
-                    actions=payload.model_dump(mode="json")["actions"],
-                    provider="openai",
-                    model=self.model,
-                )
-            except (json.JSONDecodeError, RuntimeError, ValueError) as exc:
+                proposal = NoteProposal.model_validate(parsed)
+            except (json.JSONDecodeError, ValidationError) as exc:
                 last_error = exc
+                continue
+            return ExtractionResult(
+                proposal=proposal.model_dump(mode="json", exclude_none=False),
+                summary=proposal.summary,
+                provider="openai",
+                model=self.model,
+            )
 
-        raise RuntimeError(
-            f"extraction failed after retry: {last_error}"
-        ) from last_error
+        raise RuntimeError(f"extraction failed after retry: {last_error}") from last_error

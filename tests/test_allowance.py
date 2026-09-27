@@ -1,57 +1,52 @@
-"""Monetization acceptance scenarios: allowance enforcement, atomic
-reservation, refund on failure, idempotent retries."""
+"""The free allowance: two voice notes per month in tests, text notes free."""
 
-from conftest import DEFAULT_ACTIONS, auth_headers, receive_and_drain, receive_voice
-
-
-def usage(client, sub="user_test1"):
-    return client.get("/me", headers=auth_headers(sub)).json()["usage"]
+from conftest import auth_headers, drain, post_text, post_voice
 
 
-def test_allowance_counts_and_rejects_before_processing(client):
-    for _ in range(2):  # limit is 2 in the test config
-        resp = receive_voice(client)
-        assert resp.status_code == 201
-    u = usage(client)
-    assert u["ai_voice_used"] == 2
-    assert u["ai_voice_remaining"] == 0
-    # third recording is rejected BEFORE any AI processing begins
-    resp = receive_voice(client)
-    assert resp.status_code == 402
-    assert "exhausted" in resp.json()["detail"]
-    u = usage(client)
-    assert u["ai_voice_used"] == 2  # nothing extra was consumed
+def test_voice_notes_are_counted_and_capped(client):
+    assert post_voice(client).status_code == 201
+    assert post_voice(client).status_code == 201
+
+    third = post_voice(client)
+    assert third.status_code == 402
+    assert "allowance" in third.json()["detail"]
+
+    usage = client.get("/me", headers=auth_headers()).json()["usage"]
+    assert usage["ai_voice_used"] == 2
+    assert usage["ai_voice_remaining"] == 0
 
 
-def test_failed_processing_does_not_permanently_consume(client):
-    client.app.state.transcriber.fail = True
-    entry = receive_and_drain(client)
-    assert entry["status"] == "FAILED"
-    u = usage(client)
-    assert u["ai_voice_used"] == 0  # refunded
+def test_text_notes_do_not_use_the_voice_allowance(client):
+    for _ in range(5):
+        assert post_text(client, "a typed note").status_code == 201
+
+    usage = client.get("/me", headers=auth_headers()).json()["usage"]
+    assert usage["ai_voice_used"] == 0
+    assert post_voice(client).status_code == 201
 
 
-def test_per_user_allowance_is_independent(client):
-    receive_voice(client, sub="user_a")
-    receive_voice(client, sub="user_a")
-    receive_voice(client, sub="user_b")
-    assert usage(client, "user_a")["ai_voice_used"] == 2
-    assert usage(client, "user_b")["ai_voice_used"] == 1
-    assert client.post(
-        "/journal",
-        headers=auth_headers("user_b"),
-        files={"file": ("n.m4a", b"x", "audio/mp4")},
-        data={"duration_ms": "1000"},
-    ).status_code == 201
+def test_a_failed_note_still_counts(client):
+    """The AI already ran, so the unit is spent and the retry is free."""
+    from app.main import app
+
+    app.state.extractor.fail = True
+    resp = post_voice(client)
+    note = drain(client, resp.json()["id"])
+    assert note["status"] == "FAILED"
+
+    usage = client.get("/me", headers=auth_headers()).json()["usage"]
+    assert usage["ai_voice_used"] == 1
+
+    # record a second one to hit the cap, then prove the retry is still allowed
+    assert post_voice(client).status_code == 201
+    assert post_voice(client).status_code == 402
+
+    app.state.extractor.fail = False
+    assert client.post(f"/notes/{note['id']}/retry", headers=auth_headers()).status_code == 200
 
 
-def test_manual_journaling_consumes_no_allowance(client):
-    resp = client.post(
-        "/trades/manual",
-        headers=auth_headers(),
-        json={"actions": DEFAULT_ACTIONS["actions"]},
-    )
-    assert resp.status_code == 200, resp.text
-    assert usage(client)["ai_voice_used"] == 0  # unlimited manual journaling
-    trades = client.get("/trades", headers=auth_headers()).json()
-    assert len(trades) == 1
+def test_allowance_is_per_user(client):
+    assert post_voice(client, sub="user_a").status_code == 201
+    assert post_voice(client, sub="user_a").status_code == 201
+    assert post_voice(client, sub="user_a").status_code == 402
+    assert post_voice(client, sub="user_b").status_code == 201

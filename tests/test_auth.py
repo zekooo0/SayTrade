@@ -39,4 +39,4 @@ def test_me_reports_usage(client):
     assert body["plan"] == "FREE"
     assert body["usage"]["ai_voice_limit"] == 2  # test-configured limit
     assert body["usage"]["ai_voice_used"] == 0
-    assert body["entitlements"]["can_submit_voice"] is True
+    assert body["entitlements"]["voice_notes_per_month"] == 2

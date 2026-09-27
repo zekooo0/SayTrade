@@ -1,4 +1,4 @@
-"""Account endpoints: plan, allowance usage, entitlements."""
+"""Identity and allowance: who this user is and how much AI voice is left."""
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +11,7 @@ from app.schemas.api import MeView
 router = APIRouter(tags=["me"])
 
 
-@router.get("/me")
+@router.get("/me", response_model=MeView)
 async def me(
     request: Request,
     session: AsyncSession = Depends(get_session),
@@ -19,15 +19,10 @@ async def me(
 ):
     entitlements = request.app.state.entitlements
     usage = await entitlements.usage(session, user)
-    remaining = usage.ai_voice_remaining
+    plan = entitlements.plan_for(user)
     return MeView(
         user_id=user.id,
-        plan=usage.plan,
+        plan=plan,
         usage=usage,
-        entitlements={
-            "can_submit_voice": remaining > 0,
-            "ai_voice_remaining": remaining,
-            "analytics": "basic",  # "advanced" only once Pro billing exists
-            "ai_journal_analysis": False,
-        },
+        entitlements={"voice_notes_per_month": usage.ai_voice_limit},
     )

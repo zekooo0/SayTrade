@@ -12,66 +12,60 @@ class DomainError(Exception):
 
 
 class TradeNotFoundError(DomainError):
-    """404: the referenced Trade does not exist or does not belong to the user.
+    """404: the Trade does not exist or does not belong to the user.
 
-    Deliberately identical to "not found" for foreign ids: never leak whether
-    another user's Trade exists.
+    Deliberately identical for foreign ids: never leak whether another user's
+    Trade exists.
     """
 
     status_code = 404
 
 
-class JournalEntryNotFoundError(DomainError):
+class NoteNotFoundError(DomainError):
     status_code = 404
 
 
-class WrongJournalStateError(DomainError):
-    """409: the entry is not in the state required for the operation."""
+class WrongNoteStateError(DomainError):
+    """409: the note is not in the state required for this operation."""
 
     status_code = 409
 
 
-class TradeCompletedError(DomainError):
-    """409: executions/management changes are rejected after completion.
+class TradeClosedError(DomainError):
+    """409: a closed trade takes no more position changes.
 
-    Reopening/correction is a future explicit workflow, not a silent mutation.
+    A note with no change (a review, a lesson) is still welcome on a closed
+    trade; a new position opens a new trade.
     """
 
     status_code = 409
 
 
-class OutcomeExistsError(DomainError):
-    """409: a Trade has at most one outcome."""
+class IncompleteNoteError(DomainError):
+    """422: the note is missing a value the change needs.
 
-    status_code = 409
-
-
-class StaleValueError(DomainError):
-    """409: old_value does not match the authoritative current value.
-
-    Guards against two approvals racing on the same stop/target: the second
-    approved payload was built from state the user did not review.
+    Names the missing value so the trader can fill it in the review screen.
     """
-
-    status_code = 409
-
-
-class PositionViolationError(DomainError):
-    """422: an execution would flip the position against the Trade direction."""
 
     status_code = 422
 
 
-class MultiTradeNoteError(DomainError):
-    """422: an approved payload must target exactly one Trade (MVP rule)."""
+class PositionViolationError(DomainError):
+    """422: a sale exceeds the shares held, or a change makes no sense."""
+
+    status_code = 422
+
+
+class AmbiguousTradeError(DomainError):
+    """422: the note does not say which open trade it belongs to."""
 
     status_code = 422
 
 
 class AllowanceExhaustedError(DomainError):
-    """402: the user's AI voice allowance for this period is used up.
+    """402: the AI voice allowance for this period is used up.
 
-    Raised before any expensive AI processing begins, per the monetization spec.
+    Raised before any expensive AI processing begins.
     """
 
     status_code = 402

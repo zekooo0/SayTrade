@@ -1,3 +1,3 @@
-from app.schemas import actions, api
+from app.schemas import api, proposal
 
-__all__ = ["actions", "api"]
+__all__ = ["api", "proposal"]

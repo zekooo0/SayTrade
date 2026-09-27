@@ -1,6 +1,6 @@
 """Test fixtures. IMPORTANT: environment must be set before any app module is
-imported (app.config reads it at import time), so this file sets it at the
-very top."""
+imported (app.config reads it at import time), so this file sets it at the top.
+"""
 
 import base64
 import os
@@ -24,7 +24,6 @@ from app.providers.transcription import TranscriptionResult  # noqa: E402
 TEST_ISSUER = "https://test.clerk.accounts.dev"
 TEST_KID = "test-kid"
 
-# A single test signing key for the whole session (minted per test user).
 TEST_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
@@ -45,12 +44,7 @@ def public_jwk():
     }
 
 
-def mint_token(
-    sub: str,
-    issuer: str = TEST_ISSUER,
-    kid: str = TEST_KID,
-    ttl_seconds: int = 3600,
-) -> str:
+def mint_token(sub: str, issuer: str = TEST_ISSUER, kid: str = TEST_KID, ttl_seconds: int = 3600) -> str:
     now = datetime.now(timezone.utc)
     return jwt.encode(
         {
@@ -92,6 +86,9 @@ class FakeStorage:
     async def url(self, key: str) -> str:
         return f"https://fake-cdn.example/{key}"
 
+    async def delivery_url(self, key: str) -> str:
+        return await self.url(key)
+
 
 class FakeTranscriber:
     def __init__(self, transcript: str = "default transcript"):
@@ -104,49 +101,57 @@ class FakeTranscriber:
         return TranscriptionResult(transcript=self.transcript, provider="fake", model="fake-1")
 
 
-DEFAULT_ACTIONS = {
-    "actions": [
-        {
-            "action": "CREATE_TRADE",
-            "symbol": "AAPL",
-            "direction": "LONG",
-            "pattern": "CUP_AND_HANDLE",
-            "opened_at": "2026-09-14T12:00:00Z",
-            "executions": [
-                {
-                    "side": "BUY",
-                    "quantity": "100",
-                    "price": "105",
-                    "executed_at": "2026-09-14T12:00:00Z",
-                }
-            ],
-            "failure_point": "90",
-            "target_price": "120",
-        }
-    ]
-}
+def proposal(changes: list[dict], symbol: str | None = None, summary: str = "a note") -> dict:
+    return {"summary": summary, "symbol": symbol, "changes": changes}
+
+
+def open_proposal(
+    symbol: str = "NVDA",
+    shares: str = "100",
+    price: str = "10",
+    stop: str | None = "9",
+    target: str | None = "12",
+    occurred_at: str | None = None,
+) -> dict:
+    change: dict = {"kind": "OPEN", "shares": shares, "price": price}
+    if stop is not None:
+        change["stop"] = stop
+    if target is not None:
+        change["target"] = target
+    if occurred_at is not None:
+        change["occurred_at"] = occurred_at
+    return proposal([change], symbol=symbol, summary=f"Opened {symbol} at {price}.")
+
+
+DEFAULT_PROPOSAL = open_proposal()
 
 
 class FakeExtractor:
-    def __init__(self, actions: dict | None = None):
-        self.actions = actions or DEFAULT_ACTIONS
+    """Stands in for the LLM. Swap `.proposal` to change what the next note reads."""
+
+    def __init__(self, proposal_body: dict | None = None):
+        self.proposal = proposal_body or DEFAULT_PROPOSAL
         self.fail = False
+        self.calls: list[dict] = []
 
     async def extract(self, transcript: str, recorded_at=None, active_trade=None) -> ExtractionResult:
+        self.calls.append(
+            {"transcript": transcript, "recorded_at": recorded_at, "active_trade": active_trade}
+        )
         if self.fail:
             raise RuntimeError("simulated extraction outage")
         return ExtractionResult(
-            actions=self.actions["actions"], provider="fake", model="fake-1"
+            proposal=self.proposal,
+            summary=self.proposal.get("summary"),
+            provider="fake",
+            model="fake-1",
         )
 
 
 async def reset_database() -> None:
     async with engine.begin() as conn:
         await conn.execute(
-            text(
-                "TRUNCATE usage_periods, journal_entries, trade_outcomes, "
-                "management_decisions, executions, trades, users RESTART IDENTITY CASCADE"
-            )
+            text("TRUNCATE changes, notes, trades, users RESTART IDENTITY CASCADE")
         )
 
 
@@ -164,39 +169,86 @@ def client():
         yield test_client
 
 
-def receive_voice(client: TestClient, sub: str = "user_test1", audio_file_name: str = "note.m4a"):
-    """POST a fake voice recording; returns the entry as of the POST response
-    (status RECEIVED — processing runs in the background after the response)."""
-    return client.post(
-        "/journal",
-        headers=auth_headers(sub),
-        files={"file": (audio_file_name, b"\x00\x01\x02fake-audio-bytes", "audio/mp4")},
-        data={"duration_ms": "30000"},
-    )
-
+# --------------------------------------------------------------------------
+# helpers
+# --------------------------------------------------------------------------
 
 TERMINAL_STATUSES = {"EXTRACTED", "FAILED"}
 
 
-def drain_entry(client: TestClient, entry_id: str, sub: str = "user_test1", polls: int = 25):
-    """Poll GET /journal/{id} until the background pipeline reaches a stable
-    state (EXTRACTED, or FAILED on a broken provider).
+def post_voice(client: TestClient, sub: str = "user_test1", trade_id: str | None = None):
+    data = {"duration_ms": "30000"}
+    if trade_id:
+        data["trade_id"] = trade_id
+    return client.post(
+        "/notes/voice",
+        headers=auth_headers(sub),
+        files={"file": ("note.m4a", b"\x00\x01\x02fake-audio-bytes", "audio/mp4")},
+        data=data,
+    )
 
-    The background task completes between TestClient requests; the small poll
-    loop makes the tests independent of that timing.
-    """
+
+def post_text(client: TestClient, body: str, sub: str = "user_test1", trade_id: str | None = None):
+    payload: dict = {"text": body}
+    if trade_id:
+        payload["trade_id"] = trade_id
+    return client.post("/notes/text", headers=auth_headers(sub), json=payload)
+
+
+def get_note(client: TestClient, note_id: str, sub: str = "user_test1") -> dict:
+    resp = client.get(f"/notes/{note_id}", headers=auth_headers(sub))
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def drain(client: TestClient, note_id: str, sub: str = "user_test1", polls: int = 25) -> dict:
+    """Poll until the background pipeline settles (EXTRACTED or FAILED)."""
     import time
 
     body: dict = {}
     for _ in range(polls):
-        body = client.get(f"/journal/{entry_id}", headers=auth_headers(sub)).json()
+        body = get_note(client, note_id, sub)
         if body["status"] in TERMINAL_STATUSES:
             return body
         time.sleep(0.01)
-    raise AssertionError(f"entry {entry_id} did not finish processing: {body}")
+    raise AssertionError(f"note {note_id} did not finish processing: {body}")
 
 
-def receive_and_drain(client: TestClient, sub: str = "user_test1"):
-    resp = receive_voice(client, sub)
+def approve(client: TestClient, note_id: str, sub: str = "user_test1"):
+    return client.post(f"/notes/{note_id}/approve", headers=auth_headers(sub))
+
+
+def set_proposal(client: TestClient, proposal_body: dict) -> None:
+    app.state.extractor.proposal = proposal_body
+
+
+def extractor_calls() -> list[dict]:
+    return app.state.extractor.calls
+
+
+def trades(client: TestClient, sub: str = "user_test1", **params) -> list[dict]:
+    resp = client.get("/trades", headers=auth_headers(sub), params=params)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def trade(client: TestClient, trade_id: str, sub: str = "user_test1") -> dict:
+    resp = client.get(f"/trades/{trade_id}", headers=auth_headers(sub))
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def record_text(client: TestClient, body: str, sub: str = "user_test1", trade_id: str | None = None) -> dict:
+    """Post a typed note and wait for extraction. Returns the note view."""
+    resp = post_text(client, body, sub, trade_id)
     assert resp.status_code == 201, resp.text
-    return drain_entry(client, resp.json()["id"], sub)
+    return drain(client, resp.json()["id"], sub)
+
+
+def open_a_trade(client: TestClient, sub: str = "user_test1", **kwargs) -> dict:
+    """Approve an OPEN note and return the created trade summary."""
+    set_proposal(client, open_proposal(**kwargs))
+    note = record_text(client, "I opened a position", sub)
+    result = approve(client, note["id"], sub)
+    assert result.status_code == 200, result.text
+    return trade(client, result.json()["trade_id"], sub)

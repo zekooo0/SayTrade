@@ -1,7 +1,7 @@
 """Response DTOs for the trading API.
 
-Decimals are always serialized as strings so clients never incur float
-drift on prices/quantities.
+Decimals are always serialized as strings so clients never incur float drift
+on prices or share counts.
 """
 
 from datetime import datetime
@@ -9,14 +9,14 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 def d(dec: Decimal | None) -> str | None:
     """Canonical decimal -> string: no exponent, no trailing zeros.
 
     NUMERIC(20,8) columns round-trip as 100.00000000; the API contract is the
-    clean numeric string (100) so clients never format surprises.
+    clean numeric string (100) so clients never see format surprises.
     """
     if dec is None:
         return None
@@ -26,79 +26,31 @@ def d(dec: Decimal | None) -> str | None:
         return str(dec)
 
 
-def ds(dec: Decimal) -> str:
-    """Non-optional variant for columns the schema guarantees NOT NULL."""
-    return d(dec) or ""
-
-
-class ExecutionView(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class ChangeView(BaseModel):
+    """One approved position change, as shown on the timeline."""
 
     id: UUID
-    side: str
-    quantity: str
-    price: str
-    executed_at: datetime
-    reason: str | None = None
+    kind: str
+    occurred_at: datetime
+    shares: str | None = None
+    price: str | None = None
+    stop: str | None = None
+    target: str | None = None
 
 
-class DecisionView(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
+class NoteView(BaseModel):
+    """One note: the trader's words, the AI summary, and the applied changes."""
 
-    id: UUID
-    type: str
-    old_value: str | None = None
-    new_value: str | None = None
-    reason: str
-    decided_at: datetime
-
-
-class OutcomeView(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
-    type: int | None = None
-    result: str
-    lesson: str | None = None
-    notes: str | None = None
-    completed_at: datetime
-
-
-class TradeSummaryView(BaseModel):
-    id: UUID
-    symbol: str
-    direction: str
-    pattern: str
-    status: str
-    opened_at: datetime
-    completed_at: datetime | None = None
-    net_position: str = "0"
-    current_stop: str | None = None
-    current_target: str | None = None
-
-
-class TradeDetailView(TradeSummaryView):
-    rationale: str | None = None
-    failure_point: str | None = None
-    target_price: str | None = None
-    executions: list[ExecutionView] = Field(default_factory=list)
-    decisions: list[DecisionView] = Field(default_factory=list)
-    outcome: OutcomeView | None = None
-    journal_entry_ids: list[UUID] = Field(default_factory=list)
-    realized_pnl: str | None = None  # NULL unless fully closed (modeled like the spec)
-    r_multiple: str | None = None
-    warnings: list[str] = Field(default_factory=list)
-
-
-class JournalEntryView(BaseModel):
     id: UUID
     status: str
-    type: str
+    source: str
     trade_id: UUID | None = None
-    transcript: str | None = None
+    text: str | None = None
+    summary: str | None = None
     proposal: dict[str, Any] | None = None
-    approved_payload: dict[str, Any] | None = None
+    changes: list[ChangeView] = Field(default_factory=list)
     audio_url: str | None = None
+    duration_ms: int | None = None
     transcription_provider: str | None = None
     transcription_model: str | None = None
     extraction_provider: str | None = None
@@ -110,12 +62,43 @@ class JournalEntryView(BaseModel):
     updated_at: datetime
 
 
-class ApprovalResultView(BaseModel):
-    journal_entry_id: UUID | None = None  # None on the manual path
+class TradeSummaryView(BaseModel):
+    """A trade with every number derived from its changes."""
+
+    id: UUID
+    symbol: str
+    currency: str | None = None
+    opened_at: datetime
+    closed_at: datetime | None = None
+    is_open: bool = True
+
+    shares: str = "0"
+    average_price: str | None = None
+    current_stop: str | None = None
+    initial_stop: str | None = None
+    current_target: str | None = None
+    planned_r: str | None = None
+
+    realized_pnl: str | None = None
+    r_multiple: str | None = None
+    holding_days: float | None = None
+
+    note_count: int = 0
+    last_note_at: datetime | None = None
+
+
+class TradeDetailView(TradeSummaryView):
+    notes: list[NoteView] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ApproveResultView(BaseModel):
+    note_id: UUID
     status: str = "APPROVED"
-    trade_ids: list[UUID] = Field(default_factory=list)
-    created_trade_id: UUID | None = None
-    warning: str | None = None
+    trade_id: UUID | None = None
+    created_trade: bool = False
+    changes_applied: int = 0
+    warnings: list[str] = Field(default_factory=list)
 
 
 class UsageView(BaseModel):
@@ -135,17 +118,16 @@ class MeView(BaseModel):
 
 
 class AnalyticsView(BaseModel):
-    trade_count: int = 0
+    total_trades: int = 0
+    open_trades: int = 0
+    closed_trades: int = 0
     wins: int = 0
     losses: int = 0
-    breakevens: int = 0
+    breakeven: int = 0
     win_rate: float | None = None
-    gross_pnl: str | None = None
+    total_pnl: str | None = None
     average_pnl: str | None = None
-    total_r: str | None = None
     average_r: str | None = None
+    best_r: str | None = None
+    worst_r: str | None = None
     average_holding_days: float | None = None
-    pnl_result_disagreements: int = 0
-    by_pattern: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    by_type: dict[str, dict[str, Any]] = Field(default_factory=dict)
-    over_time: list[dict[str, Any]] = Field(default_factory=list)

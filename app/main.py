@@ -9,10 +9,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import analytics, journal, me, trades
+from app.api import analytics, me, notes, trades
 from app.auth.jwks import HttpJwksFetcher
 from app.billing.entitlements import Entitlements
 from app.config import settings
+from app.db import SessionLocal
 from app.domain.errors import DomainError
 from app.providers.extraction import OpenAIExtractor
 from app.providers.storage import CloudinaryStorage
@@ -56,6 +57,9 @@ app.state.extractor = OpenAIExtractor(
     model=settings.openai_extraction_model,
 )
 app.state.entitlements = Entitlements(free_voice_limit=settings.free_ai_voice_limit)
+# Background processing needs its own session per note, independent of the
+# request session that created it.
+app.state.session_factory = SessionLocal
 
 
 @app.exception_handler(DomainError)
@@ -68,7 +72,7 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-app.include_router(journal.router)
+app.include_router(notes.router)
 app.include_router(trades.router)
 app.include_router(me.router)
 app.include_router(analytics.router)

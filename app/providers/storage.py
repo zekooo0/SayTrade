@@ -30,6 +30,8 @@ class AudioStorage(Protocol):
 
     async def url(self, key: str) -> str: ...
 
+    async def delivery_url(self, key: str) -> str: ...
+
 
 class CloudinaryStorage:
     """Cloudinary-backed audio storage; the key IS the Cloudinary public_id.
@@ -81,12 +83,12 @@ class CloudinaryStorage:
         await asyncio.to_thread(_upload)
 
     async def read(self, key: str) -> bytes:
-        url = await self._authoritative_url(key)
+        url = await self.delivery_url(key)
         return await asyncio.to_thread(
             lambda: urllib.request.urlopen(url, timeout=30).read()  # noqa: S310 - storage URL is our own
         )
 
-    async def _authoritative_url(self, key: str) -> str:
+    async def delivery_url(self, key: str) -> str:
         """Resolve the real delivery URL via the Cloudinary API.
 
         Deriving the URL from the key alone is guesswork (format/version

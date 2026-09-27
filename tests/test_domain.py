@@ -1,137 +1,133 @@
-"""Pure domain logic: position arithmetic, P&L/R, stop/target derivation."""
+"""Position arithmetic: pure functions over change-like objects.
 
+Real Change rows and ChangeProposal objects both work, so a small stub is
+enough to pin the math down.
+"""
+
+from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from datetime import datetime, timezone
+from uuid import UUID, uuid4
 
-import pytest
+from app.domain import position as pos
 
-from app.domain import management, pnl, position
-from app.domain.errors import PositionViolationError
-
-
-class FakeExec:
-    def __init__(self, side, quantity, price, executed_at="2026-09-14T12:00:00Z"):
-        self.side = side
-        self.quantity = Decimal(quantity)
-        self.price = Decimal(price)
-        self.executed_at = datetime.fromisoformat(executed_at.replace("Z", "+00:00"))
-        self.created_at = None
+T0 = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
 
-class FakeTrade:
-    def __init__(self, failure_point=None, target_price=None):
-        self.failure_point = failure_point
-        self.target_price = target_price
-        self.status = "ACTIVE"
-        self.id = "t"
+@dataclass
+class StubChange:
+    """Duck-typed stand-in for a Change row or a ChangeProposal."""
+
+    kind: str
+    shares: Decimal | None = None
+    price: Decimal | None = None
+    stop: Decimal | None = None
+    target: Decimal | None = None
+    occurred_at: datetime = T0
+    id: UUID = field(default_factory=uuid4)
 
 
-class FakeDecision:
-    def __init__(self, type_, old_value, new_value, decided_at):
-        self.type = type_
-        self.old_value = old_value
-        self.new_value = new_value
-        self.decided_at = datetime.fromisoformat(decided_at.replace("Z", "+00:00"))
-        self.created_at = None
+def dec(value):
+    return Decimal(value) if value is not None else None
 
 
-# --- position ----------------------------------------------------------------
-def test_long_position_builds_and_closes():
-    pos = Decimal("0")
-    pos = position.apply_execution(pos, "LONG", "BUY", Decimal("100"))
-    pos = position.apply_execution(pos, "LONG", "BUY", Decimal("50"))
-    pos = position.apply_execution(pos, "LONG", "SELL", Decimal("75"))
-    assert pos == Decimal("75")
+def change(kind, shares=None, price=None, stop=None, target=None, minutes=0, **kwargs):
+    return StubChange(
+        kind=kind,
+        shares=dec(shares),
+        price=dec(price),
+        stop=dec(stop),
+        target=dec(target),
+        occurred_at=T0 + timedelta(minutes=minutes),
+        id=kwargs.get("id", uuid4()),
+    )
 
 
-def test_long_cannot_sell_what_it_does_not_own():
-    pos = position.apply_execution(Decimal("0"), "LONG", "BUY", Decimal("10"))
-    with pytest.raises(PositionViolationError):
-        position.apply_execution(pos, "LONG", "SELL", Decimal("11"))
-
-
-def test_long_cannot_open_with_a_sell():
-    with pytest.raises(PositionViolationError):
-        position.apply_execution(Decimal("0"), "LONG", "SELL", Decimal("100"))
-
-
-def test_short_convention_inverted():
-    pos = Decimal("0")
-    pos = position.apply_execution(pos, "SHORT", "SELL", Decimal("100"))  # open short
-    assert pos == Decimal("-100")
-    pos = position.apply_execution(pos, "SHORT", "BUY", Decimal("40"))  # cover
-    assert pos == Decimal("-60")
-    with pytest.raises(PositionViolationError):
-        position.apply_execution(pos, "SHORT", "BUY", Decimal("61"))  # over-cover
-
-
-# --- P&L ---------------------------------------------------------------------
-def test_gross_pnl_long():
-    exs = [
-        FakeExec("BUY", "100", "105"),
-        FakeExec("SELL", "100", "120"),
+def nvda_round_trip():
+    return [
+        change("OPEN", shares="100", price="10", stop="9", target="12"),
+        change("TRIM", shares="50", price="12", minutes=60),
+        change("ADD", shares="50", price="11", stop="10.5", minutes=120),
+        change("STOP", stop="10.2", minutes=180),
+        change("CLOSE", shares="100", price="11.95", minutes=240),
     ]
-    assert pnl.gross_pnl(exs) == Decimal("1500")
-    assert pnl.is_fully_closed(exs) is True
-    assert pnl.realized_pnl(exs) == Decimal("1500")
 
 
-def test_pnl_not_realized_while_open():
-    exs = [FakeExec("BUY", "100", "105"), FakeExec("SELL", "50", "115")]
-    assert pnl.is_fully_closed(exs) is False
-    assert pnl.realized_pnl(exs) is None  # never invent a realized number
+def test_shares_held_is_buys_minus_sells():
+    assert pos.shares_held(nvda_round_trip()) == Decimal("0")
+    assert pos.shares_held([change("OPEN", shares="100", price="10")]) == Decimal("100")
+    assert pos.shares_held(
+        [change("OPEN", shares="100", price="10"), change("TRIM", shares="40", price="11")]
+    ) == Decimal("60")
 
 
-def test_gross_pnl_short_same_formula():
-    exs = [FakeExec("SELL", "100", "120"), FakeExec("BUY", "100", "105")]
-    assert pnl.gross_pnl(exs) == Decimal("1500")
+def test_average_price_weights_each_buy():
+    changes = [change("OPEN", shares="100", price="10"), change("ADD", shares="50", price="11")]
+    assert pos.average_price(changes) == Decimal("1550") / Decimal("150")
+    assert pos.q8(pos.average_price(changes)) == Decimal("10.33333333")
 
 
-# --- R multiple --------------------------------------------------------------
-def test_r_multiple_spec_example():
-    exs = [FakeExec("BUY", "100", "105"), FakeExec("SELL", "100", "120")]
-    assert pnl.r_multiple(exs, Decimal("90")) == Decimal("1")  # 1500 / (100*15)
+def test_average_price_needs_a_price():
+    assert pos.average_price([change("OPEN", shares="100")]) is None
 
 
-def test_r_multiple_undefined_cases():
-    exs = [FakeExec("BUY", "100", "105"), FakeExec("SELL", "100", "120")]
-    assert pnl.r_multiple(exs, None) is None  # no failure point
-    assert pnl.r_multiple([], Decimal("90")) is None  # no initial entry
-    assert pnl.r_multiple(exs, Decimal("105")) is None  # zero planned risk
-    open_exs = [FakeExec("BUY", "100", "105")]
-    assert pnl.r_multiple(open_exs, Decimal("90")) is None  # not realized
+def test_only_open_and_stop_move_the_trade_stop():
+    """The added-part stop never becomes the trade stop (one stop per trade)."""
+    changes = [change("OPEN", shares="100", price="10", stop="9")]
+    assert pos.current_stop(changes) == Decimal("9")
+    changes.append(change("ADD", shares="50", price="11", stop="10.5", minutes=30))
+    assert pos.current_stop(changes) == Decimal("9")      # unchanged by the ADD
+    changes.append(change("STOP", stop="9.5", minutes=60))
+    assert pos.current_stop(changes) == Decimal("9.5")
+    assert pos.initial_stop(changes) == Decimal("9")
 
 
-def test_r_denominator_anchored_on_initial_entry():
-    # scale-in after entry does NOT change the denominator
-    exs = [
-        FakeExec("BUY", "100", "105", "2026-09-14T12:00:00Z"),
-        FakeExec("BUY", "50", "108", "2026-09-14T13:00:00Z"),
-        FakeExec("SELL", "150", "120", "2026-09-16T15:00:00Z"),
+def test_stop_and_target_moves_are_market_time_ordered():
+    """A backdated note must not rewind the stop."""
+    changes = [
+        change("OPEN", shares="100", price="10", stop="9", minutes=60),
+        change("STOP", stop="8", minutes=0),          # earlier in market time
     ]
-    # risk = 100 * |105-90| = 1500; pnl = 150*120 - (100*105 + 50*108) = 18000-15900 = 2100
-    assert pnl.r_multiple(exs, Decimal("90")) == Decimal("2100") / Decimal("1500")
+    assert pos.current_stop(changes) == Decimal("9")
 
 
-# --- stop/target semantics ---------------------------------------------------
-def test_current_stop_falls_back_to_original_plan():
-    trade = FakeTrade(failure_point=Decimal("90"), target_price=Decimal("120"))
-    assert management.current_stop(trade, []) == Decimal("90")
-    assert management.current_target(trade, []) == Decimal("120")
+def test_realized_pnl_uses_the_average_buy_price():
+    changes = [change("OPEN", shares="100", price="10")]
+    assert pos.realized_pnl(changes) is None
+    changes.append(change("TRIM", shares="50", price="12", minutes=30))
+    assert pos.realized_pnl(changes) == Decimal("100")
 
 
-def test_latest_decision_wins_original_plan_is_history():
-    trade = FakeTrade(failure_point=Decimal("90"))
-    decisions = [
-        FakeDecision("STOP_LOSS_CHANGE", Decimal("90"), Decimal("94"), "2026-09-15T10:00:00Z"),
-        FakeDecision("STOP_LOSS_CHANGE", Decimal("94"), Decimal("96"), "2026-09-16T10:00:00Z"),
+def test_realized_pnl_is_none_without_a_sale_price():
+    changes = [
+        change("OPEN", shares="100", price="10"),
+        change("TRIM", shares="50", minutes=30),
     ]
-    assert management.current_stop(trade, decisions) == Decimal("96")
-    assert trade.failure_point == Decimal("90")  # never overwritten
+    assert pos.realized_pnl(changes) is None
 
 
-def test_target_and_stop_decisions_are_independent():
-    trade = FakeTrade(target_price=Decimal("120"))
-    decisions = [FakeDecision("TARGET_CHANGE", Decimal("120"), Decimal("125"), "2026-09-15T10:00:00Z")]
-    assert management.current_target(trade, decisions) == Decimal("125")
-    assert management.current_stop(trade, decisions) == trade.failure_point  # None
+def test_risk_planned_r_and_r_multiple():
+    changes = [change("OPEN", shares="100", price="10", stop="9", target="12")]
+    assert pos.risk_per_share(changes) == Decimal("1")
+    assert pos.planned_r(changes) == Decimal("2")
+    assert pos.r_multiple(changes) is None            # nothing sold yet
+
+    changes.append(change("CLOSE", shares="100", price="13", minutes=60))
+    assert pos.r_multiple(changes) == Decimal("3")
+
+
+def test_r_multiple_is_none_when_the_stop_is_not_below_the_entry():
+    changes = [change("OPEN", shares="100", price="10", stop="10.5", target="12")]
+    assert pos.risk_per_share(changes) is None
+    assert pos.planned_r(changes) is None
+
+
+def test_warnings_name_the_gaps():
+    changes = [change("OPEN", shares="100")]        # no price at all
+    out = pos.warnings(changes, closed=False)
+    assert any("no price" in w for w in out)
+    assert any("no position change" not in w for w in out)
+
+    assert any("holds no position change" in w for w in pos.warnings([], closed=False))
+    closed_no_pnl = [change("OPEN", shares="100", price="10"), change("CLOSE", shares="100")]
+    assert any("cannot be computed" in w for w in pos.warnings(closed_no_pnl, closed=True))

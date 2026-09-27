@@ -1,145 +1,61 @@
-"""Analytics: canonical metric definitions, derived once, from the domain
-tables. The same functions back any future dashboard or "Ask your journal" —
-never a second implementation of a metric."""
+"""Analytics: the notebook's scoreboard, computed from the change rows."""
 
-from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain import pnl
-from app.models import Execution, Trade, TradeOutcome, User
-from app.schemas.api import AnalyticsView
+from app.domain import position as pos
+from app.models import Trade, User
+from app.schemas.api import AnalyticsView, d
+from app.services import notes as note_service
+
+ZERO = Decimal("0")
 
 
-def _fmt(value: Decimal | None) -> str | None:
-    return str(value) if value is not None else None
+async def overview(session: AsyncSession, user: User) -> AnalyticsView:
+    trades = list(await session.scalars(select(Trade).where(Trade.user_id == user.id)))
+    view = AnalyticsView()
+    view.total_trades = len(trades)
 
-
-def _win_rate(wins: int, losses: int) -> float | None:
-    decided = wins + losses
-    return wins / decided if decided else None
-
-
-def _bucket(t: Trade) -> str:
-    return t.opened_at.astimezone(timezone.utc).strftime("%Y-%m")
-
-
-async def summary(session: AsyncSession, user: User) -> AnalyticsView:
-    trades = list(
-        await session.scalars(
-            select(Trade).where(Trade.user_id == user.id).order_by(Trade.opened_at)
-        )
-    )
-    trade_ids = [t.id for t in trades]
-    executions: dict = {}
-    if trade_ids:
-        rows = await session.scalars(
-            select(Execution).where(Execution.trade_id.in_(trade_ids))
-        )
-        for e in rows:
-            executions.setdefault(e.trade_id, []).append(e)
-    outcomes: dict = {}
-    if trade_ids:
-        rows = await session.scalars(
-            select(TradeOutcome).where(TradeOutcome.trade_id.in_(trade_ids))
-        )
-        for o in rows:
-            outcomes[o.trade_id] = o
-
-    wins = losses = breaks = 0
-    pnls: list[Decimal] = []
-    rs: list[Decimal] = []
+    closed_pnls: list[Decimal] = []
+    closed_rs: list[Decimal] = []
     holding_days: list[float] = []
-    disagreements = 0
-    by_pattern: dict[str, dict] = {}
-    by_type: dict[str, dict] = {}
-    over_time: dict[str, dict] = {}
 
-    for t in trades:
-        exs = executions.get(t.id, [])
-        outcome = outcomes.get(t.id)
+    for trade in trades:
+        summary = await note_service.trade_summary(session, trade)
+        if summary.is_open:
+            view.open_trades += 1
+            continue
+        view.closed_trades += 1
+        if summary.holding_days is not None:
+            holding_days.append(summary.holding_days)
 
-        bucket = _bucket(t)
-        bt = over_time.setdefault(bucket, {"period": bucket, "count": 0, "pnl": _fmt(Decimal("0"))})
-        bt["count"] += 1
-
-        pat = by_pattern.setdefault(
-            t.pattern,
-            {"pattern": t.pattern, "count": 0, "wins": 0, "losses": 0, "win_rate": None, "pnl": _fmt(Decimal("0"))},
-        )
-        pat["count"] += 1
-
-        realized = pnl.realized_pnl(exs)  # only fully closed trades
-        r = pnl.r_multiple(exs, t.failure_point)
-
-        if outcome is not None:
-            if outcome.result == "WIN":
-                wins += 1
-                pat["wins"] += 1
-            elif outcome.result == "LOSS":
-                losses += 1
-                pat["losses"] += 1
+        pnl = Decimal(summary.realized_pnl) if summary.realized_pnl is not None else None
+        if pnl is not None:
+            closed_pnls.append(pnl)
+            if pnl > ZERO:
+                view.wins += 1
+            elif pnl < ZERO:
+                view.losses += 1
             else:
-                breaks += 1
-            key = f"Type {outcome.type}" if outcome.type else "Type unknown"
-            typ = by_type.setdefault(
-                key, {"type": key, "count": 0, "wins": 0, "losses": 0, "win_rate": None, "pnl": _fmt(Decimal("0"))}
-            )
-            typ["count"] += 1
-            if outcome.result == "WIN":
-                typ["wins"] += 1
-            elif outcome.result == "LOSS":
-                typ["losses"] += 1
+                view.breakeven += 1
+        if summary.r_multiple is not None:
+            closed_rs.append(Decimal(summary.r_multiple))
 
-        if realized is not None:
-            pnls.append(realized)
-            bt["pnl"] = _fmt(Decimal(bt["pnl"] or "0") + realized)
-            pat["pnl"] = _fmt(Decimal(pat["pnl"] or "0") + realized)
-            if outcome is not None:
-                typ = by_type.setdefault(
-                    f"Type {outcome.type}" if outcome.type else "Type unknown", {}
-                )
-                if typ:
-                    typ["pnl"] = _fmt(Decimal(typ.get("pnl") or "0") + realized)
-                if (outcome.result == "WIN" and realized < 0) or (
-                    outcome.result == "LOSS" and realized > 0
-                ) or (outcome.result == "BREAKEVEN" and realized != 0):
-                    disagreements += 1
-        if r is not None:
-            rs.append(r)
+    decided = view.wins + view.losses + view.breakeven
+    if decided:
+        view.win_rate = round(view.wins / decided, 4)
 
-        if t.completed_at is not None:
-            holding_days.append((t.completed_at - t.opened_at).total_seconds() / 86400.0)
+    if closed_pnls:
+        total = sum(closed_pnls, ZERO)
+        view.total_pnl = d(total)
+        view.average_pnl = d(total / len(closed_pnls))
+    if closed_rs:
+        view.average_r = d(sum(closed_rs, ZERO) / len(closed_rs))
+        view.best_r = d(max(closed_rs))
+        view.worst_r = d(min(closed_rs))
+    if holding_days:
+        view.average_holding_days = round(sum(holding_days) / len(holding_days), 2)
 
-    gross = sum(pnls, Decimal("0")) if pnls else None
-    avg_pnl = (gross / len(pnls)) if pnls and gross is not None else None
-    total_r = sum(rs, Decimal("0")) if rs else None
-    avg_r = (total_r / len(rs)) if rs and total_r is not None else None
-
-    for stat in [*by_pattern.values(), *by_type.values()]:
-        if stat:
-            stat["win_rate"] = _win_rate(stat["wins"], stat["losses"])
-    for stat in over_time.values():
-        stat["win_rate"] = _win_rate(
-            sum(1 for t in trades if _bucket(t) == stat["period"] and outcomes.get(t.id) and outcomes[t.id].result == "WIN"),
-            sum(1 for t in trades if _bucket(t) == stat["period"] and outcomes.get(t.id) and outcomes[t.id].result == "LOSS"),
-        )
-
-    return AnalyticsView(
-        trade_count=len(trades),
-        wins=wins,
-        losses=losses,
-        breakevens=breaks,
-        win_rate=_win_rate(wins, losses),
-        gross_pnl=_fmt(gross),
-        average_pnl=_fmt(avg_pnl),
-        total_r=_fmt(total_r),
-        average_r=_fmt(avg_r),
-        average_holding_days=(sum(holding_days) / len(holding_days)) if holding_days else None,
-        pnl_result_disagreements=disagreements,
-        by_pattern=by_pattern,
-        by_type=by_type,
-        over_time=sorted(over_time.values(), key=lambda b: b["period"]),
-    )
+    return view

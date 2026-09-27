@@ -1,3 +1,3 @@
-from app.services import actions, analytics, journal, trades
+from app.services import analytics, journal, notes, trades
 
-__all__ = ["actions", "analytics", "journal", "trades"]
+__all__ = ["analytics", "journal", "notes", "trades"]
