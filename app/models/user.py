@@ -31,6 +31,12 @@ class User(Base):
         String(64), unique=True, nullable=False
     )
 
+    # The plan this account is on: FREE or PRO. Stored, not derived, so a plan
+    # can be switched by hand until a payment provider exists.
+    plan: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=text("'FREE'")
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

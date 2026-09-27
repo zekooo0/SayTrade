@@ -193,7 +193,9 @@ async def approve_note(
         note = await journal_service.get_note(session, user, note_id)
         if payload is not None and payload.proposal is not None:
             note.proposal = payload.proposal.model_dump(mode="json", exclude_none=False)
-        result = await note_service.apply_note(session, user, note)
+        result = await note_service.apply_note(
+            session, user, note, entitlements=request.app.state.entitlements
+        )
     except DomainError as exc:
         await session.rollback()
         _raise_http(exc)

@@ -3,8 +3,11 @@
 One row per thing the trader said. That row is also the job: its status names
 the stage, so there is no separate queue table.
 
-A voice note costs one unit of the free allowance, reserved before any AI
-spend. A text note costs nothing (it skips transcription).
+A voice note counts against the plan's monthly AI voice guard, checked before
+any AI spend. A text note costs nothing (it skips transcription).
+
+What a plan really sells is active trades, and that limit is enforced at
+approval time — in the applier, where a trade is actually created.
 """
 
 from datetime import datetime, timezone
@@ -81,7 +84,7 @@ async def receive_voice_note(
     marked FAILED(STORAGE) and the client must re-record.
     """
     now = now or datetime.now(timezone.utc)
-    await entitlements.reserve(session, user.id, now)
+    await entitlements.reserve_voice(session, user, now)
     owned_trade_id = await _owned_trade_or_404(session, user, trade_id)
 
     note = Note(

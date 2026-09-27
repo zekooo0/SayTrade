@@ -1,3 +1,15 @@
-from app.billing.entitlements import Entitlements, PLAN_FREE, PLAN_PRO, month_period
+from app.billing.entitlements import (
+    PLAN_FREE,
+    PLAN_PRO,
+    Entitlements,
+    PlanLimits,
+    month_period,
+)
 
-__all__ = ["Entitlements", "PLAN_FREE", "PLAN_PRO", "month_period"]
+__all__ = [
+    "Entitlements",
+    "PLAN_FREE",
+    "PLAN_PRO",
+    "PlanLimits",
+    "month_period",
+]

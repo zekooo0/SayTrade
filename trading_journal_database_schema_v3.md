@@ -1,10 +1,10 @@
 # sayTrade — database schema v3 (long only)
 
 Status: **applied**. This is the DDL that is live in the database (dumped from
-`public` after migration `b7d41c0f9e22`, which rebuilds the domain on top of
-`5d8f9a1c2b4e`). The old six-table design is gone: users, trades, executions,
-management_decisions, journal_entries, trade_outcomes, usage_periods are
-dropped.
+`public` after migrations `b7d41c0f9e22` (the long-only rebuild) and
+`c1e93b7a4d20` (the plan column), which sit on top of `5d8f9a1c2b4e`). The old
+six-table design is gone: users, trades, executions, management_decisions,
+journal_entries, trade_outcomes, usage_periods are dropped.
 
 ## The model in one paragraph
 
@@ -35,15 +35,25 @@ all computed at read time from the change rows by the pure functions in
 CREATE TABLE public.users (
     id            uuid DEFAULT uuidv7() NOT NULL,
     clerk_sub     character varying(64) NOT NULL,
+    plan          character varying(16) DEFAULT 'FREE'::character varying NOT NULL,
     created_at    timestamp with time zone DEFAULT now() NOT NULL,
     updated_at    timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT pk_users PRIMARY KEY (id),
-    CONSTRAINT uq_users_clerk_sub UNIQUE (clerk_sub)
+    CONSTRAINT uq_users_clerk_sub UNIQUE (clerk_sub),
+    CONSTRAINT ck_users_plan_allowed CHECK (plan IN ('FREE', 'PRO'))
 );
 ```
 
 One row per Clerk identity. The backend verifies the Clerk JWT against the
 instance JWKS on every request and never trusts a client-supplied user id.
+
+`plan` is **stored**, not derived: there is no checkout yet, so an operator
+switches it by hand. Free holds **3 active trades**; Pro ($5 USD a month) lifts
+the limit to unlimited. The limit is enforced only where a trade would be
+**created** — a follow-up note on a trade the trader already holds is never
+blocked, and a refused note approves the moment a slot frees up. The monthly AI
+voice cap (100) is an abuse guard, not the product limit, and typed notes never
+count against it.
 
 ### trades
 

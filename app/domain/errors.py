@@ -71,6 +71,16 @@ class AllowanceExhaustedError(DomainError):
     status_code = 402
 
 
+class TradeLimitReachedError(DomainError):
+    """402: the plan's active-trade limit is reached.
+
+    Raised at approval time, and only when the note would OPEN a trade — a
+    follow-up note on a trade the trader already holds is never blocked.
+    """
+
+    status_code = 402
+
+
 class StorageUnavailableError(DomainError):
     """503: the audio could not be durably stored (e.g. Cloudinary down)."""
 

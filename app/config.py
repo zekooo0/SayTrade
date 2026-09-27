@@ -31,9 +31,21 @@ class Settings(BaseSettings):
     cloudinary_api_key: str | None = None
     cloudinary_api_secret: str | None = None
 
-    # --- Monetization (plan limits; config not schema, per the spec) ---
-    free_ai_voice_limit: int = 5
-    pro_ai_voice_limit: int = 100
+    # --- Monetization ---
+    # The free plan holds a small number of ACTIVE trades and has a generous
+    # monthly cap on AI voice notes (an abuse guard, not a product limit).
+    # Pro lifts the trade limit. Prices are shown, not charged: there is no
+    # checkout yet, so plans are switched by hand.
+    free_active_trades: int = 3
+    free_voice_notes_per_month: int = 100
+    # None means unlimited.
+    pro_active_trades: int | None = None
+    pro_voice_notes_per_month: int | None = None
+    pro_price_usd: int = 5
+    # Where "Upgrade" sends the trader. Empty hides nothing — the UI shows the
+    # price and says payments are not open yet. Set it to a Stripe/Gumroad
+    # payment link, or to mailto:you@example.com, when you have one.
+    upgrade_url: str = ""
 
     # --- Audio intake limits ---
     max_audio_bytes: int = 25 * 1024 * 1024  # 25 MB recording cap

@@ -10,6 +10,8 @@ One engine, one transaction. The rules:
 * Every value the change needs must be present. A missing value names itself
   in the error so the trader can fix it in one tap.
 * Long only: a sale can never exceed the shares held.
+* The plan's active-trade limit is checked here, at the one place a trade is
+  created, and only for a note that opens a new trade.
 """
 
 from datetime import datetime, timezone
@@ -19,6 +21,8 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.billing.entitlements import Entitlements
+from app.config import settings
 from app.domain import position as pos
 from app.domain.errors import (
     AmbiguousTradeError,
@@ -270,7 +274,11 @@ async def _resolve_trade(
 
 
 async def apply_note(
-    session: AsyncSession, user: User, note: Note, now: datetime | None = None
+    session: AsyncSession,
+    user: User,
+    note: Note,
+    now: datetime | None = None,
+    entitlements: Entitlements | None = None,
 ) -> ApproveResultView:
     """Approve a note: validate, resolve the trade, write the change rows."""
     now = now or datetime.now(timezone.utc)
@@ -319,6 +327,10 @@ async def apply_note(
             raise PositionViolationError(
                 f"You already have an open {symbol} trade. Record a follow-up note on it instead."
             )
+        # The plan's active-trade limit. Checked here, at the only place a trade
+        # is created, and never for a change to a trade already held.
+        policy = entitlements or Entitlements.from_settings(settings)
+        await policy.check_can_open_trade(session, user)
         trade = Trade(
             user_id=user.id,
             symbol=symbol,

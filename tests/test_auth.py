@@ -37,6 +37,7 @@ def test_me_reports_usage(client):
     assert resp.status_code == 200
     body = resp.json()
     assert body["plan"] == "FREE"
-    assert body["usage"]["ai_voice_limit"] == 2  # test-configured limit
-    assert body["usage"]["ai_voice_used"] == 0
-    assert body["entitlements"]["voice_notes_per_month"] == 2
+    assert body["usage"]["voice_notes_limit"] == 2  # test-configured guard
+    assert body["usage"]["voice_notes_used"] == 0
+    assert body["usage"]["active_trades_limit"] == 3
+    assert body["entitlements"]["pro_price_usd"] == 5

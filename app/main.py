@@ -56,7 +56,7 @@ app.state.extractor = OpenAIExtractor(
     api_key=settings.openai_api_key or "",
     model=settings.openai_extraction_model,
 )
-app.state.entitlements = Entitlements(free_voice_limit=settings.free_ai_voice_limit)
+app.state.entitlements = Entitlements.from_settings(settings)
 # Background processing needs its own session per note, independent of the
 # request session that created it.
 app.state.session_factory = SessionLocal

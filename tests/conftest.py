@@ -1,13 +1,30 @@
-"""Test fixtures. IMPORTANT: environment must be set before any app module is
-imported (app.config reads it at import time), so this file sets it at the top.
+"""Test fixtures.
+
+TWO RULES, both load-bearing:
+
+1. Environment must be set BEFORE any app module is imported (app.config reads
+   it at import time), so this file sets it at the top.
+2. The suite TRUNCATEs every domain table between tests. It must never point at
+   a developer's database, so it forces its own: `saytrade_test`. The guard in
+   reset_database() refuses to run against any other database name.
+
+Create the test database once (it is separate from the dev database):
+
+    docker exec saytrade-db psql -U saytrade -d postgres -c "CREATE DATABASE saytrade_test OWNER saytrade;"
+    DATABASE_URL=postgresql+asyncpg://saytrade:saytrade@127.0.0.1:5432/saytrade_test ./.venv/bin/alembic upgrade head
 """
 
 import base64
 import os
 from datetime import datetime, timedelta, timezone
 
+os.environ.setdefault(
+    "DATABASE_URL",
+    "postgresql+asyncpg://saytrade:saytrade@127.0.0.1:5432/saytrade_test",
+)
 os.environ.setdefault("CLERK_FRONTEND_API", "https://test.clerk.accounts.dev")
-os.environ.setdefault("FREE_AI_VOICE_LIMIT", "2")  # exhaust quickly in tests
+# Exhaust the monthly voice guard quickly in tests; keep the real trade limit.
+os.environ.setdefault("FREE_VOICE_NOTES_PER_MONTH", "2")
 
 import jwt  # noqa: E402
 import pytest  # noqa: E402
@@ -149,10 +166,33 @@ class FakeExtractor:
 
 
 async def reset_database() -> None:
+    # Safety net: this TRUNCATE deletes every journal row. It must only ever
+    # run against the test database, never against a developer's own data.
+    name = engine.url.database or ""
+    if not name.endswith("_test"):
+        raise RuntimeError(
+            f"refusing to truncate database {name!r}: tests must run against a "
+            "database whose name ends in _test. Set DATABASE_URL, or create "
+            "saytrade_test (see the docstring at the top of conftest.py)."
+        )
     async with engine.begin() as conn:
         await conn.execute(
             text("TRUNCATE changes, notes, trades, users RESTART IDENTITY CASCADE")
         )
+
+
+def set_plan(sub: str, plan: str) -> None:
+    """Switch a test user's plan, the way an operator would by hand."""
+    import asyncio
+
+    async def _update() -> None:
+        async with engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE users SET plan = :plan WHERE clerk_sub = :sub"),
+                {"plan": plan, "sub": sub},
+            )
+
+    asyncio.run(_update())
 
 
 @pytest.fixture
@@ -164,7 +204,14 @@ def client():
     app.state.storage = FakeStorage()
     app.state.transcriber = FakeTranscriber()
     app.state.extractor = FakeExtractor()
-    app.state.entitlements = Entitlements(free_voice_limit=2)
+    app.state.entitlements = Entitlements(
+        free_active_trades=3,
+        free_voice_notes_per_month=2,
+        pro_active_trades=None,
+        pro_voice_notes_per_month=None,
+        pro_price_usd=5,
+        upgrade_url="https://example.com/upgrade",
+    )
     with TestClient(app) as test_client:
         yield test_client
 

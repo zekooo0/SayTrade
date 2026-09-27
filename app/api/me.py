@@ -1,4 +1,4 @@
-"""Identity and allowance: who this user is and how much AI voice is left."""
+"""Identity and plan: who this user is and what the plan allows."""
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,10 +19,9 @@ async def me(
 ):
     entitlements = request.app.state.entitlements
     usage = await entitlements.usage(session, user)
-    plan = entitlements.plan_for(user)
     return MeView(
         user_id=user.id,
-        plan=plan,
+        plan=usage.plan,
         usage=usage,
-        entitlements={"voice_notes_per_month": usage.ai_voice_limit},
+        entitlements=entitlements.entitlements_view(),
     )

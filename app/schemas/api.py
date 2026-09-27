@@ -102,10 +102,13 @@ class ApproveResultView(BaseModel):
 
 
 class UsageView(BaseModel):
+    """What the plan allows and what is used. `None` limits are unlimited."""
+
     plan: str = "FREE"
-    ai_voice_limit: int
-    ai_voice_used: int
-    ai_voice_remaining: int
+    active_trades_used: int = 0
+    active_trades_limit: int | None = None
+    voice_notes_used: int = 0
+    voice_notes_limit: int | None = None
     period_start: datetime
     period_end: datetime
 
@@ -117,7 +120,56 @@ class MeView(BaseModel):
     entitlements: dict[str, Any] = Field(default_factory=dict)
 
 
+class EquityPoint(BaseModel):
+    """One closed trade on the cumulative curve, in close-date order."""
+
+    trade_id: UUID
+    symbol: str
+    closed_at: datetime
+    pnl: str
+    cumulative_pnl: str
+    r_multiple: str | None = None
+
+
+class RBucket(BaseModel):
+    """One bar of the R distribution."""
+
+    label: str
+    count: int
+    loss: bool = False
+
+
+class MonthBucket(BaseModel):
+    month: str  # YYYY-MM
+    pnl: str
+    trades: int
+    wins: int
+
+
+class WeekBucket(BaseModel):
+    week_start: str  # YYYY-MM-DD, a Monday
+    notes: int
+
+
+class StopBreach(BaseModel):
+    """A closed trade that lost more than the 1R the stop should have capped."""
+
+    trade_id: UUID
+    symbol: str
+    r_multiple: str
+    closed_at: datetime | None = None
+
+
 class AnalyticsView(BaseModel):
+    """The scoreboard. Every number is derived from change rows on read.
+
+    `rated_trades` is the sample the R statistics use: closed trades that have
+    both an initial stop and an exit price. `unrated_trades` are the closed
+    trades those statistics had to leave out, so a small sample is visible
+    instead of hidden.
+    """
+
+    # --- counts ---
     total_trades: int = 0
     open_trades: int = 0
     closed_trades: int = 0
@@ -125,9 +177,43 @@ class AnalyticsView(BaseModel):
     losses: int = 0
     breakeven: int = 0
     win_rate: float | None = None
+
+    # --- money ---
     total_pnl: str | None = None
     average_pnl: str | None = None
+    best_pnl: str | None = None
+    worst_pnl: str | None = None
+    gross_profit: str | None = None
+    gross_loss: str | None = None
+    profit_factor: str | None = None  # None when there is no loss yet to divide by
+    max_drawdown: str | None = None
+    average_holding_days: float | None = None
+
+    # --- R statistics (over rated_trades only) ---
+    rated_trades: int = 0
+    unrated_trades: int = 0
+    unpriced_trades: int = 0  # closed with a sale that carries no price
     average_r: str | None = None
     best_r: str | None = None
     worst_r: str | None = None
-    average_holding_days: float | None = None
+    average_win_r: str | None = None
+    average_loss_r: str | None = None
+    win_rate_r: float | None = None
+    expectancy_r: str | None = None
+
+    # --- stop discipline ---
+    beyond_stop: int = 0
+    beyond_stop_trades: list[StopBreach] = Field(default_factory=list)
+
+    # --- the journal habit ---
+    notes_total: int = 0
+    notes_voice: int = 0
+    notes_typed: int = 0
+    observation_notes: int = 0
+    note_streak_days: int = 0
+    notes_per_week: list[WeekBucket] = Field(default_factory=list)
+
+    # --- series ---
+    equity_curve: list[EquityPoint] = Field(default_factory=list)
+    r_distribution: list[RBucket] = Field(default_factory=list)
+    monthly: list[MonthBucket] = Field(default_factory=list)
