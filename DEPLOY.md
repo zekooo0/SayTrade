@@ -4,16 +4,16 @@ Four services, no credit card, no expiry:
 
 | Piece | Where | Free tier in one line |
 | --- | --- | --- |
-| API (FastAPI) | Render, free web service | 512 MB, sleeps after 15 min idle, ~1 min to wake, 750 instance hours/month |
+| API (FastAPI) | FastAPI Cloud, Hobby | 0.1 vCPU / 512 MB shared, scale-to-zero, autoscale, 3 apps, 1-day logs |
 | Database (Postgres) | Neon, free plan | 0.5 GB, no expiry, compute sleeps after 5 min idle |
 | Web (Next.js) | Vercel, Hobby | unlimited static, serverless functions |
 | Audio (recordings) | Cloudinary | already configured, unchanged |
 
-Render's own free Postgres expires 30 days after creation and is then deleted, so
-this setup keeps the database on Neon instead.
+All three are live:
 
-Order matters: Neon gives the API its database, Render gives the web app its API
-URL, Vercel gives the API its allowed origin.
+    API      https://saytrade-api.fastapicloud.dev
+    web      https://saytrade-web.vercel.app
+    database saytrade / misty-violet-59144510 / aws-eu-central-1 / Postgres 18
 
 ---
 
@@ -21,10 +21,8 @@ URL, Vercel gives the API its allowed origin.
 
 Status: **done.** Project `misty-violet-59144510` (`saytrade`), region
 `aws-eu-central-1`, Postgres 18, branch `production` (the default branch), linked
-to this repo via `.neon`.
-
-The corrected connection string is in **`.env.neon`** (gitignored): asyncpg
-scheme, `ssl=require`, direct host. Paste its `DATABASE_URL` value into Render.
+to this repo via `.neon`. The corrected connection string lives in **`.env.neon`**
+(gitignored): asyncpg scheme, `ssl=require`, direct host.
 
 > **`neon link` overwrites `DATABASE_URL` in `.env`** with the *pooler* host under
 > the plain `postgresql://` scheme plus `channel_binding=require` — three things
@@ -32,120 +30,116 @@ scheme, `ssl=require`, direct host. Paste its `DATABASE_URL` value into Render.
 > into `.env` the same way. Always pull with `--file .env.neon`, or repair `.env`
 > afterwards and verify by connecting through `app.config.settings`.
 
-The original steps, for reference:
+Conversion, if you ever do it by hand: scheme → `postgresql+asyncpg://`,
+`sslmode=require` → `ssl=require`, delete `channel_binding`, and take the
+**direct** host (drop `-pooler`) because SQLAlchemy keeps its own pool.
 
-1. Sign in at neon.com (GitHub login is fine), create a project.
-2. Region: **eu-central-1 (Frankfurt)** — same city as the Render service, so
-   every query stays inside Europe.
-3. Postgres version: 17 or 18. The app uses nothing version-specific.
-4. Copy the connection string (Dashboard → Connect). It looks like:
+## 2. FastAPI Cloud — the API
 
-   ```
-   postgresql://USER:PASSWORD@ep-something-123456.eu-central-1.aws.neon.tech/neondb?sslmode=require
-   ```
+Status: **done.** App `saytrade-api` (id `8061d9aa-9667-44b2-8784-bda9e6716a1e`),
+team `Ahmed Zakaria`, linked through `.fastapicloud/` (gitignored). The API answers
+at <https://saytrade-api.fastapicloud.dev/health>.
 
-5. Convert it for this app. Three edits, all required:
+Redeploy:
 
-   - scheme `postgresql://` → `postgresql+asyncpg://` (async driver)
-   - `sslmode=require` → `ssl=require` (asyncpg does not understand `sslmode`)
-   - delete `channel_binding=require` if it is present
+```
+cd backend/sayTrade
+./.venv/bin/fastapi deploy        # or: uv run fastapi deploy
+```
 
-   ```
-   postgresql+asyncpg://USER:PASSWORD@ep-something-123456.eu-central-1.aws.neon.tech/neondb?ssl=require
-   ```
+The CLI packages the repo (respecting `.gitignore`), builds it in the cloud with
+uv from `uv.lock`, and verifies the deployment. The app entrypoint comes from
+`[tool.fastapi] entrypoint = "app.main:app"` in `pyproject.toml`.
 
-6. Take the **direct** host, not the pooled one: remove `-pooler` from the host
-   name. SQLAlchemy keeps its own pool; the Neon pooler is for serverless clients.
+### Environment variables
 
-Leave the database empty. The API creates the schema itself on first boot.
+Seven, all set. Secrets are marked `--secret` and cannot be read back:
 
-## 2. Render — the API
+| Key | Kind |
+| --- | --- |
+| `DATABASE_URL` | secret — the Neon string from `.env.neon` |
+| `CLERK_FRONTEND_API` | plain |
+| `OPENAI_API_KEY` | secret |
+| `CLOUDINARY_CLOUD_NAME` | plain |
+| `CLOUDINARY_API_KEY` | secret |
+| `CLOUDINARY_API_SECRET` | secret |
+| `CORS_ORIGINS` | plain — `https://saytrade-web.vercel.app` |
 
-1. Sign in at render.com with GitHub. No card is asked for.
-2. **New → Blueprint**, pick the `SayTrade` repo. Render reads `render.yaml` and
-   shows one service, `saytrade-api`, on the free plan.
-3. It asks for the values marked `sync: false`. Paste each one **in the Render
-   dashboard**, never into a chat or a file:
+```
+./.venv/bin/fastapi cloud env list                 # names only
+./.venv/bin/fastapi cloud env set KEY VALUE --secret
+```
 
-   | Key | Value |
-   | --- | --- |
-   | `DATABASE_URL` | the converted Neon string from step 1.5 |
-   | `CLERK_FRONTEND_API` | your Clerk instance URL, e.g. `https://mint-stud-8634.clerk.accounts.dev` |
-   | `OPENAI_API_KEY` | your OpenAI key |
-   | `CLOUDINARY_CLOUD_NAME` | your cloud name |
-   | `CLOUDINARY_API_KEY` | your Cloudinary key |
-   | `CLOUDINARY_API_SECRET` | your Cloudinary secret |
-   | `CORS_ORIGINS` | `https://saytrade-web.vercel.app` — you can fill it in after step 3 |
+Two traps, both met while setting these up:
 
-   These are the same names as your local `.env`. Nothing else is required: the
-   plan limits live in `app/config.py` with defaults.
+- **`env set` cannot read a piped value.** Its prompt is a TUI: piped stdin
+  answers "Cancelled. Aborted." Pass the value as an argument, and read it from
+  the local files inside a script so it never lands in the conversation.
+- **Setting a variable does not redeploy.** Run `fastapi deploy` again.
 
-4. Deploy. The start command runs `alembic upgrade head` first, so the tables
-   exist before the server answers. Watch the log for
-   `Application startup complete`.
-5. Your API is at `https://<service-name>.onrender.com` — copy the real URL from
-   the dashboard. Check it in a browser: `/health` must answer `{"status":"ok"}`.
+### Migrations have no hook
 
-Note: the first request after 15 idle minutes takes about a minute. Open the API
-`/health` once before you record a note, or accept the wait.
+FastAPI Cloud has no start command and no release phase, so `alembic upgrade head`
+cannot run at boot. Run it **from the machine** against Neon:
+
+```
+cd backend/sayTrade
+NEON_URL=$(grep -m1 '^DATABASE_URL=' .env.neon | cut -d= -f2- | tr -d '"')
+DATABASE_URL="$NEON_URL" ./.venv/bin/alembic upgrade head
+DATABASE_URL="$NEON_URL" ./.venv/bin/alembic current      # expect c1e93b7a4d20 (head)
+```
+
+`alembic/env.py` takes the URL from `settings.database_url`, and a real
+environment variable wins over `.env`, so the override works.
+
+Do this before every deploy that ships a migration. Do not move migrations into
+the app's startup: the app autoscales past one replica, and concurrent runs fight
+each other.
 
 ## 3. Vercel — the web app
 
-Status: **already done.** The project `zekooo0s-projects/saytrade-web` exists, is
-linked to the GitHub repo, and serves <https://saytrade-web.vercel.app>. Two of
-its three variables are set in Production and were verified by hash against the
-local `.env.local`. The third waits for the Render URL:
+Status: **done.** Project `zekooo0s-projects/saytrade-web`, linked to
+`github.com/zekooo0/saytrade-web`, serving <https://saytrade-web.vercel.app>.
+All three production variables are set and were verified by hash against the local
+`.env.local`:
 
-| Key | Status |
+| Key | Value |
 | --- | --- |
-| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | set (Production) |
-| `CLERK_SECRET_KEY` | set (Production) |
-| `NEXT_PUBLIC_API_URL` | **not set yet** — needs the Render URL, then redeploy |
+| `NEXT_PUBLIC_API_URL` | `https://saytrade-api.fastapicloud.dev` |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | from the Clerk dashboard |
+| `CLERK_SECRET_KEY` | from the Clerk dashboard |
 
-The original steps, for reference:
-
-1. Sign in at vercel.com with GitHub, **Add New → Project**, import `saytrade-web`.
-   Framework is detected as Next.js; keep the defaults.
-2. Add the environment variables **before** the first deploy, because
-   `NEXT_PUBLIC_*` values are baked into the build:
-
-   | Key | Value |
-   | --- | --- |
-   | `NEXT_PUBLIC_API_URL` | `https://<your-render-service>.onrender.com` |
-   | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_test_…` from your Clerk dashboard |
-   | `CLERK_SECRET_KEY` | `sk_test_…` from your Clerk dashboard |
-
-3. Deploy. You get `https://saytrade-web.vercel.app`.
+`NEXT_PUBLIC_*` values are baked into the client bundle at build time. Proven
+locally: a build without the variable carries `localhost:8000` in four chunks, a
+build with it carries the host in those same four. **Change the value and you must
+redeploy.**
 
 ## 4. Close the loop
 
-Both ends must learn about the other one:
-
-1. **CORS.** In Render, set `CORS_ORIGINS` to the Vercel URL
-   (`https://saytrade-web.vercel.app`). Several origins are allowed, comma
-   separated. Save: Render redeploys by itself.
-2. **Clerk.** In the Clerk dashboard, add the Vercel domain under the instance's
-   allowed origins / domains. Without it, sign-in fails on the live site — the
-   Clerk development instance only trusts localhost out of the box.
-3. **Check the full path:** open the site, sign in, record a note. If the note
-   stays at `RECEIVED`, the API is awake but the pipeline failed — read the
-   Render log.
+1. **CORS.** `CORS_ORIGINS` on the API is already the Vercel URL. Several origins
+   are allowed, comma separated.
+2. **Clerk.** Add the Vercel domain under the instance's allowed origins in the
+   Clerk dashboard. Without it, sign-in fails on the live site — the Clerk
+   development instance trusts only localhost out of the box.
+3. **Check the full path:** sign in, record a note, confirm the note reaches
+   `EXTRACTED` or `APPROVED`, not `RECEIVED` forever.
 
 ---
 
 ## Things worth knowing
 
-- **The free API sleeps.** After 15 idle minutes the next request waits about a
-  minute. Fine for one trader, visible to a visitor.
-- **750 instance hours/month.** A sleeping service does not spend them, so this
-  is enough for one always-waking service.
-- **`NEXT_PUBLIC_API_URL` is baked at build time.** Change it and you must
-  redeploy the frontend; editing the variable alone is not enough.
+- **The free API scales to zero.** The first request after an idle period pays a
+  cold start. Hobby's minimum replicas are pinned at 0 and cannot be raised.
+- **Background work after a response is the one thing to watch here.** The voice
+  pipeline runs in a Starlette `BackgroundTask`, after the response is sent, on an
+  app that scales to zero. If an instance is torn down inside that window, the note
+  stalls at `RECEIVED`. Retry it — the pipeline is idempotent per stage — and read
+  the logs. If it happens often, the pipeline needs a real queue or an always-on
+  instance.
+- **Logs and metrics keep one day** on Hobby: `./.venv/bin/fastapi cloud logs`.
 - **Vercel Hobby is for non-commercial use.** SayTrade shows a $5 plan, so a
-  paying product belongs on Vercel Pro eventually ($20/month). Free while it is
-  a private project.
-- **Render's free tier is not for production data.** No backups, one instance,
-  possible restarts. Neon keeps the data (6-hour restore window on free).
+  paying product belongs on Vercel Pro eventually ($20/month).
+- **Neon's free tier is not a backup service.** 6-hour restore window, 0.5 GB.
 - **Plans are still switched by hand**, as designed — no checkout yet:
 
   ```
@@ -153,7 +147,6 @@ Both ends must learn about the other one:
   ```
 
 - **Your local journal stays local.** The cloud database starts empty. To copy
-  the local rows up later, use `pg_dump` against the container and `psql` against
-  Neon.
+  the local rows up later, `pg_dump` the container and `psql` into Neon.
 - **Every live voice note spends real OpenAI money**, in the cloud exactly as
   locally. The 100/month guard is what protects it.
