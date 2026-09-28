@@ -76,10 +76,22 @@ Note: the first request after 15 idle minutes takes about a minute. Open the API
 
 ## 3. Vercel — the web app
 
-1. Push the frontend repo (already done: `zekooo0/saytrade-web`, private).
-2. Sign in at vercel.com with GitHub, **Add New → Project**, import `saytrade-web`.
+Status: **already done.** The project `zekooo0s-projects/saytrade-web` exists, is
+linked to the GitHub repo, and serves <https://saytrade-web.vercel.app>. Two of
+its three variables are set in Production and were verified by hash against the
+local `.env.local`. The third waits for the Render URL:
+
+| Key | Status |
+| --- | --- |
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | set (Production) |
+| `CLERK_SECRET_KEY` | set (Production) |
+| `NEXT_PUBLIC_API_URL` | **not set yet** — needs the Render URL, then redeploy |
+
+The original steps, for reference:
+
+1. Sign in at vercel.com with GitHub, **Add New → Project**, import `saytrade-web`.
    Framework is detected as Next.js; keep the defaults.
-3. Add the environment variables **before** the first deploy, because
+2. Add the environment variables **before** the first deploy, because
    `NEXT_PUBLIC_*` values are baked into the build:
 
    | Key | Value |
@@ -88,7 +100,7 @@ Note: the first request after 15 idle minutes takes about a minute. Open the API
    | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_test_…` from your Clerk dashboard |
    | `CLERK_SECRET_KEY` | `sk_test_…` from your Clerk dashboard |
 
-4. Deploy. You get `https://saytrade-web.vercel.app`.
+3. Deploy. You get `https://saytrade-web.vercel.app`.
 
 ## 4. Close the loop
 
