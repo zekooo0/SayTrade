@@ -118,11 +118,68 @@ redeploy.**
 
 1. **CORS.** `CORS_ORIGINS` on the API is already the Vercel URL. Several origins
    are allowed, comma separated.
-2. **Clerk.** Add the Vercel domain under the instance's allowed origins in the
-   Clerk dashboard. Without it, sign-in fails on the live site — the Clerk
-   development instance trusts only localhost out of the box.
-3. **Check the full path:** sign in, record a note, confirm the note reaches
-   `EXTRACTED` or `APPROVED`, not `RECEIVED` forever.
+2. **Clerk.** The deployed pair is still the *development* instance (`pk_test` /
+   `sk_test` on Vercel, Frontend API `https://mint-stud-8634.clerk.accounts.dev`).
+   That is why the live site says development mode.
+
+### Switching Clerk to the production instance
+
+Three values in two dashboards, and **they must change together**. Any one of them
+out of step makes every API call answer 401:
+
+| Where | Key | Production value |
+| --- | --- | --- |
+| Vercel, Production | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_live_…` |
+| Vercel, Production | `CLERK_SECRET_KEY` | `sk_live_…` |
+| FastAPI Cloud | `CLERK_FRONTEND_API` | `https://clerk.saytrade-web.vercel.app` |
+
+The Frontend API host is the publishable key's own contents: base64-decode the
+part after `pk_live_` and you get the host (`…$` suffix stripped). Both dashboard
+values are pasted **in the dashboard**, never into a chat or a shell command.
+
+Then redeploy both halves — `NEXT_PUBLIC_*` is baked at build time:
+
+```
+cd backend/sayTrade && ./.venv/bin/fastapi deploy
+cd indie-hacker/say-trade && npx vercel@latest --prod --yes
+```
+
+Local development keeps the development keys in `.env` and `.env.local`. Only the
+deployed environments move.
+
+### Google sign-in in production
+
+Clerk shares its own Google credentials for development instances. Production
+requires **your** OAuth client, so there is no Client ID or Client Secret until
+you make one:
+
+1. Clerk Dashboard → **SSO connections** → Add connection → For all users →
+   Google. Toggle on **Enable for sign-up and sign-in** and **Use custom
+   credentials**. Copy the **Authorized Redirect URI** it shows — for this
+   instance it is `https://clerk.saytrade-web.vercel.app/v1/oauth_callback`.
+2. Google Cloud Console → APIs & Services → Credentials → Create credentials →
+   OAuth client ID → **Web application**.
+   - Authorized JavaScript origins: `https://saytrade-web.vercel.app` and
+     `http://localhost:3000`.
+   - Authorized redirect URIs: the value copied from Clerk.
+3. Paste the new **Client ID** and **Client Secret** into the Clerk Google
+   connection and save.
+4. Google's OAuth consent screen starts in **Testing** (100 users, and testers
+   must be listed). Set it **In production** before real users sign in.
+
+### Finishing the production instance
+
+The Clerk Dashboard's home page lists what is still needed — typically DNS records
+for the instance domain and then **Deploy certificates**. Clerk's documented
+requirement is a domain you own with DNS access; `saytrade-web.vercel.app` is
+Vercel's domain, so if the Domains page asks for records you cannot add, move the
+site to a domain you control. Accounts do **not** migrate between the development
+and production instances — the cloud database is empty, so nothing is lost.
+
+### Checking the full path
+
+Sign in, record a note, and confirm it reaches `EXTRACTED` or `APPROVED`, not
+`RECEIVED` forever.
 
 ---
 
