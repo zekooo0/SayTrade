@@ -29,6 +29,7 @@ from app.providers.storage import AudioStorage
 from app.providers.transcription import Transcriber
 from app.schemas.api import NoteView
 from app.services import notes as note_service
+from app.services import summary as summary_service
 from app.services.notes import (
     STATUS_APPROVED,
     STATUS_EXTRACTED,
@@ -179,6 +180,7 @@ async def process_note(
     storage: AudioStorage,
     transcriber: Transcriber,
     extractor: Extractor,
+    summarizer: summary_service.Summarizer | None = None,
 ) -> None:
     """Run the note through transcription (voice only) and extraction.
 
@@ -230,11 +232,25 @@ async def process_note(
                     recorded_at=note.created_at,
                     active_trade=await _extraction_context(session, note),
                 )
+                # The summary is written from the changes, never from the
+                # transcript, so it cannot repeat a mishearing. Written here so
+                # the review screen has the line, and written again at approval
+                # from the rows that are actually applied.
+                proposal = extracted.proposal or {}
+                summary = await summary_service.write_summary(
+                    proposal.get("changes") or [],
+                    symbol=proposal.get("symbol"),
+                    language=summary_service.language_of(
+                        proposal.get("language"), text
+                    ),
+                    summarizer=summarizer,
+                    text=text,
+                )
                 await _staged_write(
                     session,
                     note_id,
                     proposal=extracted.proposal,
-                    summary=extracted.summary,
+                    summary=summary,
                     extraction_provider=extracted.provider,
                     extraction_model=extracted.model,
                     status=STATUS_EXTRACTED,
@@ -336,6 +352,7 @@ async def retry_note(
     storage: AudioStorage,
     transcriber: Transcriber,
     extractor: Extractor,
+    summarizer: summary_service.Summarizer | None = None,
 ) -> NoteView:
     """Re-run the pipeline from the stalled stage. Never charges twice."""
     note = await get_note(session, user, note_id)
@@ -351,7 +368,9 @@ async def retry_note(
     note.failed_stage = None
     note.error_message = None
     await session.commit()
-    await process_note(session_factory, note.id, storage, transcriber, extractor)
+    await process_note(
+        session_factory, note.id, storage, transcriber, extractor, summarizer
+    )
     if not await _note_exists(session, note.id):
         # The trader discarded the note while this retry was running, so there
         # is nothing left to refresh or to show.

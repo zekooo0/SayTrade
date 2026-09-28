@@ -48,6 +48,10 @@ class NoteView(BaseModel):
     # The symbol this note belongs to: its trade's symbol, else the symbol the
     # model read in the trader's words (an opening note has no trade yet).
     symbol: str | None = None
+    # The open trades to choose from, when a note changes a position and does not
+    # say which trade it belongs to. The review screen offers them; without a
+    # choice the note cannot be approved.
+    symbol_candidates: list[str] | None = None
     text: str | None = None
     summary: str | None = None
     proposal: dict[str, Any] | None = None

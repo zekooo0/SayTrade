@@ -126,8 +126,19 @@ class FakeTranscriber:
         return TranscriptionResult(transcript=self.transcript, provider="fake", model="fake-1")
 
 
-def proposal(changes: list[dict], symbol: str | None = None, summary: str = "a note") -> dict:
-    return {"summary": summary, "symbol": symbol, "changes": changes}
+def proposal(
+    changes: list[dict],
+    symbol: str | None = None,
+    summary: str = "a note",
+    language: str = "en",
+) -> dict:
+    """A proposal body.
+
+    ``summary`` is accepted and ignored: a summary is written by the app from
+    the changes, never read out of the trader's words. It stays in the signature
+    because tests pass it to describe the note they are simulating.
+    """
+    return {"language": language, "symbol": symbol, "changes": changes}
 
 
 def open_proposal(
@@ -167,10 +178,54 @@ class FakeExtractor:
             raise RuntimeError("simulated extraction outage")
         return ExtractionResult(
             proposal=self.proposal,
-            summary=self.proposal.get("summary"),
             provider="fake",
             model="fake-1",
         )
+
+
+class FakeSummarizer:
+    """Stands in for the summary model.
+
+    Records what it was asked, so a test can prove the call was given the
+    changes and not the transcript. ``fail`` makes it refuse, which must land on
+    the deterministic template.
+    """
+
+    def __init__(self, line: str | None = None):
+        self.line = line
+        self.fail = False
+        self.calls: list[dict] = []
+
+    async def summarize(
+        self, changes, language: str, symbol: str | None = None
+    ) -> str | None:
+        self.calls.append(
+            {
+                "kind": "actions",
+                "changes": [dict(c) for c in changes],
+                "language": language,
+                "symbol": symbol,
+            }
+        )
+        if self.fail:
+            raise RuntimeError("simulated summary outage")
+        if self.line is not None:
+            return self.line
+        return "AI: " + " and ".join(str(c.get("kind", "")) for c in changes)
+
+    async def summarize_observation(self, text: str, language: str) -> str | None:
+        """A note with no position change: the words are the only source."""
+        self.calls.append({"kind": "observation", "text": text, "language": language})
+        if self.fail:
+            raise RuntimeError("simulated summary outage")
+        if self.line is not None:
+            return self.line
+        return f"AI observed: {text}"
+
+
+def use_summarizer(summarizer) -> None:
+    """Install a summary model. The app reads it from app.state per request."""
+    app.state.summarizer = summarizer
 
 
 async def reset_database() -> None:
@@ -212,6 +267,10 @@ def client():
     app.state.storage = FakeStorage()
     app.state.transcriber = FakeTranscriber()
     app.state.extractor = FakeExtractor()
+    # No summary model by default: the deterministic template writes the line,
+    # so a test that does not care about the wording still gets a real summary.
+    # A test that cares installs a FakeSummarizer with use_summarizer().
+    app.state.summarizer = None
     app.state.entitlements = Entitlements(
         free_active_trades=3,
         free_voice_notes_per_month=2,

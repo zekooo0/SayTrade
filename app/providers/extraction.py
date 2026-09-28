@@ -26,7 +26,7 @@ The trader is LONG ONLY. They buy shares and they sell shares. There are no shor
 Return ONE JSON object with exactly these keys:
 
 {
-  "summary": "<one short line saying what happened. Write it in the SAME language as the note: an English note gets an English summary, an Arabic note gets an Arabic summary.>",
+  "language": "<the language the note is spoken in: en or ar>",
   "symbol": "<ticker, e.g. NVDA, or null>",
   "changes": [
     {
@@ -54,13 +54,13 @@ Rules. A broken rule is a failed extraction:
 2. Never do arithmetic. For "half", "a third", "30% of my position" use fraction (0.5, 0.3333, 0.3). The backend computes the shares from the real position.
 3. One note can hold several changes ("I sold half and moved the stop to 9.5"). Keep them in spoken order.
 4. A note with no change is valid: use an empty changes list. Example: "I saw a reverse candle, I will wait for tomorrow."
-5. symbol only when the trader names the instrument. Use the market ticker: "Nvidia" -> NVDA, "اموك" -> AMOC. Use null when the trader does not name it.
+5. symbol only when the trader names the instrument. Use the market ticker: "Nvidia" -> NVDA, "اموك" -> AMOC. NEVER invent a ticker: a wrong ticker is worse than a null one, because the trader then has to fix the trade it points at. If you are not sure which instrument the trader means, use null. Use null when the trader does not name it.
 6. A stop that applies to one added part only ("the stop for this part is 10.5") is NOT a change and NOT a STOP. Leave stop null on the ADD. That part stop stays in the trader's own words.
 7. occurred_at only when the trader states a time ("yesterday", "this morning"): ISO 8601, using the recording date for relative words. If no recording timestamp is given, leave occurred_at null. NEVER invent a date.
 8. "I sold all", "I am out", "I closed it" with no amount means CLOSE.
 9. Never infer a pattern, a reason, a result, or an emotion. The trader's words are the record.
 10. Keep every number exactly as spoken. 129.5 stays 129.5.
-11. The summary language MUST match the note language. English note -> English summary. Arabic note -> Arabic summary. Never answer an English note in Arabic.
+11. language is the language the note is spoken in: "en" or "ar". It is not the language of your answer — you write no prose at all.
 
 Return only the JSON object. No markdown, no commentary."""
 
@@ -68,7 +68,6 @@ Return only the JSON object. No markdown, no commentary."""
 @dataclass
 class ExtractionResult:
     proposal: dict[str, Any]
-    summary: str | None
     provider: str
     model: str
 
@@ -153,7 +152,6 @@ class OpenAIExtractor:
                 continue
             return ExtractionResult(
                 proposal=proposal.model_dump(mode="json", exclude_none=False),
-                summary=proposal.summary,
                 provider="openai",
                 model=self.model,
             )

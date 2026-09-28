@@ -124,7 +124,7 @@ def test_story_5_bought_more_with_a_part_stop(client):
     assert after["shares"] == "150"
     assert after["average_price"] == "10.33333333"   # (100*10 + 50*11) / 150
     assert after["current_stop"] == "9"              # unchanged: one stop per trade
-    assert "10.5" in after["notes"][-1]["summary"]
+    assert "10.5" in after["notes"][-1]["text"]
 
 
 def test_story_6_sold_everything_closes_the_trade(client):

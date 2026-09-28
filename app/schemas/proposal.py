@@ -39,11 +39,20 @@ class NoteProposal(BaseModel):
     """What the AI read in one note.
 
     ``symbol`` is the instrument. It is required only when a change opens a
-    trade (or when a follow-up must be matched to an open trade by symbol).
+    trade (or when a follow-up must be matched to an open trade by symbol). A
+    symbol the model read is a CANDIDATE: it resolves a trade only by matching
+    one the trader already holds (see resolve_note_trade).
+
+    ``language`` is the language the note is spoken in ("en" or "ar"). The
+    action summary is written in it.
+
+    There is no ``summary`` field: the summary is built from the changes, not
+    read out of the words, so the model is never asked for one.
+
     An empty ``changes`` list is valid and means "an observation, no position
     change" — e.g. "I saw a reverse candle, I will wait".
     """
 
-    summary: str | None = None
+    language: str | None = None
     symbol: str | None = None
     changes: list[ChangeProposal] = Field(default_factory=list)

@@ -17,6 +17,7 @@ from app.db import SessionLocal
 from app.domain.errors import DomainError
 from app.providers.extraction import OpenAIExtractor
 from app.providers.storage import CloudinaryStorage
+from app.providers.summary import OpenAISummarizer
 from app.providers.transcription import OpenAIWhisper
 
 app = FastAPI(title="SayTrade API", version="0.2.0")
@@ -31,7 +32,11 @@ CORS_ORIGINS = [
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS or ["http://localhost:3000"],
-    allow_methods=["GET", "POST", "OPTIONS"],
+    # Every method the client actually sends. A method missing here fails the
+    # browser's preflight with "Disallowed CORS method", which the browser then
+    # reports as a CORS failure with a null status - the call never arrives.
+    # Discarding a note is a DELETE.
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
     allow_credentials=False,
 )
@@ -53,6 +58,12 @@ app.state.transcriber = OpenAIWhisper(
     model=settings.openai_transcription_model,
 )
 app.state.extractor = OpenAIExtractor(
+    api_key=settings.openai_api_key or "",
+    model=settings.openai_extraction_model,
+)
+# Writes the one-line action summary. Same model as the extraction: the line is
+# short, and it is written from the changes, never from the transcript.
+app.state.summarizer = OpenAISummarizer(
     api_key=settings.openai_api_key or "",
     model=settings.openai_extraction_model,
 )

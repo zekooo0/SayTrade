@@ -14,6 +14,7 @@ One engine, one transaction. The rules:
   created, and only for a note that opens a new trade.
 """
 
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
@@ -35,6 +36,7 @@ from app.domain.errors import (
 from app.models import Change, Note, Trade, User
 from app.schemas.api import ApproveResultView, ChangeView, NoteView, TradeSummaryView, d
 from app.schemas.proposal import ChangeProposal, NoteProposal
+from app.services import summary as summary_service
 
 STATUS_RECEIVED = "RECEIVED"
 STATUS_TRANSCRIBED = "TRANSCRIBED"
@@ -89,55 +91,128 @@ async def notes_for_trade(
     return [await note_view(session, note, storage) for note in rows]
 
 
-async def note_symbol(session: AsyncSession, note: Note) -> str | None:
-    """The symbol a note belongs to.
+@dataclass
+class TradeResolution:
+    """Which trade a note belongs to, and what to ask when that is not known.
 
-    Order, and each step is a fact rather than a guess:
+    ``trade`` is the answer when there is one. ``candidates`` holds the trader's
+    open trades when a note that changes a position does not say which one it
+    means: the view offers them and the applier refuses without one of them, so
+    the screen can never show a trade the applier would not use.
+    """
 
-    1. The symbol of the note's TRADE — the one it was recorded against, or the
-       one its changes were applied to (the applier stamps ``note.trade_id``).
-    2. The symbol the model read in the trader's words.
-    3. The only open trade, when the note changes a position but has no trade
-       context yet: it was recorded from the journal, so the trader never named
-       the trade, and there is exactly one candidate. This mirrors the applier's
-       own resolution (``_resolve_trade`` is the authority); with two or more
-       open trades the answer is genuinely unknown and stays None.
+    trade: Trade | None = None
+    candidates: list[Trade] = field(default_factory=list)
+    trade_id_missing: bool = False
 
-    A note that OPENS a trade never falls to step 3: an opening note is a new
-    trade and cannot inherit the symbol of one already held.
 
-    Step 1 and 3 exist because a follow-up note never repeats the symbol — the
-    trader is already inside that trade — so the review screen would otherwise
-    show an empty Symbol field on every follow-up.
+async def resolve_note_trade(
+    session: AsyncSession,
+    user_id: UUID,
+    note: Note,
+    symbol: str | None,
+    needs_trade: bool,
+    lock: bool = False,
+) -> TradeResolution:
+    """The one answer to "which trade is this note about?".
+
+    Every step is a fact rather than a guess:
+
+    1. The trade the note was recorded against, or the one its changes were
+       applied to (the applier stamps ``note.trade_id``).
+    2. An open trade in the symbol the trader named. A symbol the model read is
+       a CANDIDATE: it resolves a trade only by matching one the trader already
+       holds. A symbol that matches nothing is not a trade reference — a trade
+       is never invented from it.
+    3. The only open trade, when the note changes a position but names no trade
+       (it was recorded from the journal, so the trader never said which one).
+       With two or more open trades the answer is genuinely unknown, and the
+       candidates come back for the caller to ask about.
+    4. The open trades as candidates, when the note changes nothing and names no
+       trade. Nothing is assumed for it — but the trader may still want the note
+       filed under a trade, so the review screen can offer them.
+
+    ``lock`` takes the row lock the applier needs; the read path leaves it off.
     """
     if note.trade_id is not None:
-        symbol = await session.scalar(
-            select(Trade.symbol).where(Trade.id == note.trade_id)
-        )
-        if symbol:
-            return symbol
+        query = select(Trade).where(Trade.id == note.trade_id, Trade.user_id == user_id)
+        if lock:
+            query = query.with_for_update()
+        trade = await session.scalar(query)
+        if trade is not None:
+            return TradeResolution(trade=trade)
+        # A stamped trade that is not there is a data problem, not a silence.
+        return TradeResolution(trade_id_missing=True)
 
+    if symbol:
+        query = select(Trade).where(
+            Trade.user_id == user_id,
+            Trade.symbol == symbol,
+            Trade.closed_at.is_(None),
+        )
+        if lock:
+            query = query.with_for_update()
+        trade = await session.scalar(query)
+        if trade is not None:
+            return TradeResolution(trade=trade)
+
+    query = (
+        select(Trade)
+        .where(Trade.user_id == user_id, Trade.closed_at.is_(None))
+        .order_by(Trade.opened_at.desc())
+    )
+    if lock:
+        query = query.with_for_update()
+    open_trades = list(await session.scalars(query))
+
+    if not needs_trade and not symbol:
+        # Nothing to apply and nothing named: the note is not filed on its own,
+        # but the open trades still come back so the review screen can offer to
+        # file it. An empty answer here is what left the Symbol blank with
+        # nothing to pick — the trader could see the problem and not fix it.
+        return TradeResolution(candidates=open_trades)
+
+    if len(open_trades) == 1:
+        return TradeResolution(trade=open_trades[0])
+    return TradeResolution(candidates=open_trades)
+
+
+async def symbol_view(session: AsyncSession, note: Note) -> tuple[str | None, list[str]]:
+    """The symbol to show for a note, and the trades to choose from.
+
+    The trade wins, always: a note that belongs to a trade wears that trade's
+    symbol, whatever the model read in the trader's words. The model's own
+    reading is shown only where there is no trade to inherit from — a note that
+    opens one, or an observation that changes nothing. When a position-changing
+    note has no trade and the trader holds more than one, the symbol is
+    genuinely unknown: the answer is None and the open trades come back as the
+    choices for the review screen to offer.
+    """
     proposal = note.proposal if isinstance(note.proposal, dict) else None
     read = (proposal or {}).get("symbol")
-    if isinstance(read, str) and read.strip():
-        return read.strip()
-
+    read = read.strip() if isinstance(read, str) and read.strip() else None
     changes = (proposal or {}).get("changes") or []
-    if not changes or any(c.get("kind") == "OPEN" for c in changes):
-        return None
-    open_symbols = list(
-        await session.scalars(
-            select(Trade.symbol)
-            .where(Trade.user_id == note.user_id, Trade.closed_at.is_(None))
-            .order_by(Trade.opened_at.desc())
-            .limit(2)
-        )
+    opens = any(c.get("kind") == "OPEN" for c in changes)
+
+    resolution = await resolve_note_trade(
+        session, note.user_id, note, read, needs_trade=bool(changes) and not opens
     )
-    return open_symbols[0] if len(open_symbols) == 1 else None
+    if resolution.trade is not None:
+        return resolution.trade.symbol, []
+    if read and (not changes or opens):
+        return read, []
+    return None, [t.symbol for t in resolution.candidates]
+
+
+async def note_symbol(session: AsyncSession, note: Note) -> str | None:
+    """The symbol a note belongs to. See ``symbol_view``."""
+    symbol, _candidates = await symbol_view(session, note)
+    return symbol
 
 
 async def note_view(session: AsyncSession, note: Note, storage=None) -> NoteView:
     changes = await changes_for_note(session, note.id)
+    symbol, candidates = await symbol_view(session, note)
     audio_url = None
     if note.audio_key and storage is not None:
         try:
@@ -149,7 +224,8 @@ async def note_view(session: AsyncSession, note: Note, storage=None) -> NoteView
         status=note.status,
         source=note.source,
         trade_id=note.trade_id,
-        symbol=await note_symbol(session, note),
+        symbol=symbol,
+        symbol_candidates=candidates or None,
         text=note.text,
         summary=note.summary,
         proposal=note.proposal,
@@ -269,56 +345,34 @@ def _shares_from_fraction(position: Decimal, fraction: Decimal) -> Decimal:
 async def _resolve_trade(
     session: AsyncSession, user: User, note: Note, symbol: str | None, needs_trade: bool
 ) -> Trade | None:
-    """Find the trade a follow-up note belongs to.
+    """Find the trade a follow-up note belongs to, and refuse when it cannot.
 
-    Order: the trade the note was recorded against, then an open trade in the
-    named symbol, then the only open trade. Ambiguity is reported, never
-    guessed. A note with no change needs no trade at all.
+    The resolution itself lives in ``resolve_note_trade``, which the review
+    screen calls too, so what the screen shows and what this applies can never
+    disagree. This wrapper adds the applier's refusals: ambiguity is reported
+    with the open trades named, never guessed.
     """
-    if note.trade_id is not None:
-        trade = await session.scalar(
-            select(Trade)
-            .where(Trade.id == note.trade_id, Trade.user_id == user.id)
-            .with_for_update()
-        )
-        if trade is None:
-            raise TradeNotFoundError("Trade not found")
-        return trade
-
-    if symbol:
-        trade = await session.scalar(
-            select(Trade)
-            .where(
-                Trade.user_id == user.id,
-                Trade.symbol == symbol,
-                Trade.closed_at.is_(None),
-            )
-            .with_for_update()
-        )
-        if trade is not None:
-            return trade
-
-    open_trades = list(
-        await session.scalars(
-            select(Trade)
-            .where(Trade.user_id == user.id, Trade.closed_at.is_(None))
-            .order_by(Trade.opened_at.desc())
-            .with_for_update()
-        )
+    resolution = await resolve_note_trade(
+        session, user.id, note, symbol, needs_trade, lock=True
     )
-    if len(open_trades) == 1:
-        return open_trades[0]
-    if not needs_trade:
-        return None
-    if not open_trades:
+    if resolution.trade is not None:
+        return resolution.trade
+    if resolution.trade_id_missing:
+        raise TradeNotFoundError("Trade not found")
+    if needs_trade and resolution.candidates:
+        # Only a note that CHANGES something is refused for ambiguity: it has to
+        # land somewhere, so the trader must say where. An observation applies
+        # nothing — its candidates are an offer to file it, never a demand.
+        symbols = ", ".join(t.symbol for t in resolution.candidates)
+        raise AmbiguousTradeError(
+            f"This note does not say which trade it belongs to. Your open trades: {symbols}. "
+            "Record the note from the trade page, or name the symbol."
+        )
+    if needs_trade:
         raise AmbiguousTradeError(
             "This note changes a position, but you have no open trade. Open the trade first, or record the note from its page."
         )
-    symbols = ", ".join(t.symbol for t in open_trades)
-    raise AmbiguousTradeError(
-        f"This note does not say which trade it belongs to. Your open trades: {symbols}. "
-        "Record the note from the trade page, or name the symbol."
-    )
+    return None
 
 
 async def apply_note(
@@ -327,6 +381,7 @@ async def apply_note(
     note: Note,
     now: datetime | None = None,
     entitlements: Entitlements | None = None,
+    summarizer: summary_service.Summarizer | None = None,
 ) -> ApproveResultView:
     """Approve a note: validate, resolve the trade, write the change rows."""
     now = now or datetime.now(timezone.utc)
@@ -391,7 +446,14 @@ async def apply_note(
         trade = await _resolve_trade(session, user, note, symbol, needs_trade=bool(changes))
 
     if trade is None:
-        # A pure observation: approved, nothing to apply.
+        # A pure observation: approved, nothing to apply. There is no action to
+        # summarise, so the line says what the trader saw, from their own words.
+        note.summary = await summary_service.write_summary(
+            [],
+            language=summary_service.language_of(proposal.language, note.text),
+            summarizer=summarizer,
+            text=note.text,
+        )
         note.status = STATUS_APPROVED
         note.approved_at = now
         await session.flush()
@@ -451,6 +513,17 @@ async def apply_note(
 
     for row in rows:
         session.add(row)
+
+    # The summary is written from the rows that are being applied, not from the
+    # draft the model read. The trader's edits are what count, so a line can
+    # never describe a proposal that was changed at review.
+    note.summary = await summary_service.write_summary(
+        rows,
+        symbol=trade.symbol,
+        language=summary_service.language_of(proposal.language, note.text),
+        summarizer=summarizer,
+        text=note.text,
+    )
 
     note.trade_id = trade.id
     note.status = STATUS_APPROVED

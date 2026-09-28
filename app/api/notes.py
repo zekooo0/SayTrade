@@ -7,7 +7,7 @@ and extraction run in the background and write their results onto the row.
 from typing import NoReturn
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,8 +66,11 @@ async def receive_voice(
     request: Request,
     background: BackgroundTasks,
     file: UploadFile = File(...),
-    duration_ms: int = 0,
-    trade_id: UUID | None = None,
+    duration_ms: int = Form(0),
+    # Form, not a plain param: the body is multipart, and an unmarked scalar
+    # would be read from the query string. The field would then be dropped in
+    # silence and a follow-up recorded here would lose its trade.
+    trade_id: UUID | None = Form(None),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_user),
 ):
@@ -99,6 +102,7 @@ async def receive_voice(
         request.app.state.storage,
         request.app.state.transcriber,
         request.app.state.extractor,
+        request.app.state.summarizer,
     )
     return view
 
@@ -126,6 +130,7 @@ async def receive_text(
         request.app.state.storage,
         request.app.state.transcriber,
         request.app.state.extractor,
+        request.app.state.summarizer,
     )
     return view
 
@@ -171,6 +176,7 @@ async def retry_note(
             request.app.state.storage,
             request.app.state.transcriber,
             request.app.state.extractor,
+            request.app.state.summarizer,
         )
     except DomainError as exc:
         _raise_http(exc)
@@ -216,7 +222,11 @@ async def approve_note(
         if payload is not None and payload.proposal is not None:
             note.proposal = payload.proposal.model_dump(mode="json", exclude_none=False)
         result = await note_service.apply_note(
-            session, user, note, entitlements=request.app.state.entitlements
+            session,
+            user,
+            note,
+            entitlements=request.app.state.entitlements,
+            summarizer=request.app.state.summarizer,
         )
     except DomainError as exc:
         await session.rollback()
