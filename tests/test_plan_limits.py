@@ -29,7 +29,8 @@ def test_the_free_plan_holds_three_active_trades(client):
     assert blocked.status_code == 402, blocked.text
     detail = blocked.json()["detail"]
     assert "3 active trades" in detail
-    assert "Upgrade" in detail
+    assert "Pro is coming" in detail
+    assert "$" not in detail  # no price reaches a user while Pro has no price
 
     # The note is not lost: it stays extracted, and it approves once a slot frees.
     assert (
@@ -128,6 +129,7 @@ def test_the_usage_view_describes_the_plan(client):
     assert usage["voice_notes_limit"] == 2
 
     entitlements = body["entitlements"]
-    assert entitlements["pro_price_usd"] == 5
+    # No price: Pro has no price on the page until payments open.
+    assert "pro_price_usd" not in entitlements
     assert entitlements["pro_active_trades"] is None
     assert entitlements["upgrade_url"] == "https://example.com/upgrade"

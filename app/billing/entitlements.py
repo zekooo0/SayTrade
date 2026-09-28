@@ -94,9 +94,11 @@ class Entitlements:
         return self.limits.get(plan, self.limits[PLAN_FREE])
 
     def _upgrade_hint(self) -> str:
+        """One line about Pro, with NO price: there is no price on the page
+        until payments open. Do not reintroduce a number here."""
         if self.upgrade_url:
-            return f" Upgrade to Pro (${self.pro_price_usd}/month): {self.upgrade_url}"
-        return f" Upgrade to Pro (${self.pro_price_usd}/month) to hold more."
+            return f" Pro is coming: {self.upgrade_url}"
+        return " Pro is coming — it lifts this limit."
 
     # --- counts ---
 
@@ -183,10 +185,13 @@ class Entitlements:
         )
 
     def entitlements_view(self) -> dict[str, object]:
-        """What the client needs to show the plan honestly."""
+        """What the client needs to show the plan honestly.
+
+        No price. Pro has no price until payments open, and any number put here
+        reaches the UI. `pro_price_usd` stays in config for the day it does.
+        """
         return {
             "free_active_trades": self.limits[PLAN_FREE].active_trades,
             "pro_active_trades": self.limits[PLAN_PRO].active_trades,
-            "pro_price_usd": self.pro_price_usd,
             "upgrade_url": self.upgrade_url,
         }

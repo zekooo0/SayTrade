@@ -85,3 +85,13 @@ class StorageUnavailableError(DomainError):
     """503: the audio could not be durably stored (e.g. Cloudinary down)."""
 
     status_code = 503
+
+
+class AuthUnavailableError(DomainError):
+    """503: Clerk's public keys could not be fetched, so no token can be checked.
+
+    Deliberately not a 401 — the session can be perfectly good, and a 401 would
+    make the client sign the trader out because Clerk had a bad minute.
+    """
+
+    status_code = 503

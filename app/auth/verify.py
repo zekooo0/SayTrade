@@ -6,9 +6,15 @@ so the five-line construction is the stable path here.
 """
 
 import base64
+import logging
 
+import httpx
 import jwt
 from cryptography.hazmat.primitives.asymmetric import rsa
+
+from app.domain.errors import AuthUnavailableError
+
+logger = logging.getLogger(__name__)
 
 
 class AuthError(Exception):
@@ -63,5 +69,13 @@ def verify_token(token: str, issuer: str, jwks: dict) -> dict:
 
 
 async def verify_clerk_token(token: str, fetcher, issuer: str) -> dict:
-    jwks = await fetcher.get()
+    try:
+        jwks = await fetcher.get()
+    except httpx.HTTPError as exc:
+        # Clerk unreachable is an outage, not a bad token: say so, and leave the
+        # trader signed in. A 401 here would throw away a good session.
+        logger.warning("Clerk JWKS unreachable at %s: %s", issuer, exc)
+        raise AuthUnavailableError(
+            "Authentication is temporarily unavailable; try again in a moment"
+        ) from exc
     return verify_token(token, issuer, jwks)

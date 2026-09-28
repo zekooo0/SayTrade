@@ -15,6 +15,10 @@ All three are live:
     web      https://saytrade-web.vercel.app
     database saytrade / misty-violet-59144510 / aws-eu-central-1 / Postgres 18
 
+**Sign-in runs through the app proxy** at `/__clerk`, because the production
+instance's own `clerk.…` host cannot be verified under `vercel.app`. See "A
+production instance without a domain you own: the app proxy" in section 4.
+
 ---
 
 ## 1. Neon — the database
@@ -108,6 +112,7 @@ All three production variables are set and were verified by hash against the loc
 | `NEXT_PUBLIC_API_URL` | `https://saytrade-api.fastapicloud.dev` |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | from the Clerk dashboard |
 | `CLERK_SECRET_KEY` | from the Clerk dashboard |
+| `NEXT_PUBLIC_CLERK_PROXY_URL` | `https://saytrade-web.vercel.app/__clerk/` |
 
 `NEXT_PUBLIC_*` values are baked into the client bundle at build time. Proven
 locally: a build without the variable carries `localhost:8000` in four chunks, a
@@ -131,11 +136,12 @@ out of step makes every API call answer 401:
 | --- | --- | --- |
 | Vercel, Production | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_live_…` |
 | Vercel, Production | `CLERK_SECRET_KEY` | `sk_live_…` |
-| FastAPI Cloud | `CLERK_FRONTEND_API` | `https://clerk.saytrade-web.vercel.app` |
+| Vercel, Production | `NEXT_PUBLIC_CLERK_PROXY_URL` | `https://saytrade-web.vercel.app/__clerk/` |
+| FastAPI Cloud | `CLERK_FRONTEND_API` | `https://saytrade-web.vercel.app/__clerk` |
 
-The Frontend API host is the publishable key's own contents: base64-decode the
-part after `pk_live_` and you get the host (`…$` suffix stripped). Both dashboard
-values are pasted **in the dashboard**, never into a chat or a shell command.
+The last two are the app proxy: the issuer of a proxied production instance is the
+proxy URL, not the `clerk.…` host. Read that value from Clerk's own discovery
+document rather than from memory — see section 4.
 
 Then redeploy both halves — `NEXT_PUBLIC_*` is baked at build time:
 
@@ -169,12 +175,67 @@ you make one:
 
 ### Finishing the production instance
 
-The Clerk Dashboard's home page lists what is still needed — typically DNS records
-for the instance domain and then **Deploy certificates**. Clerk's documented
-requirement is a domain you own with DNS access; `saytrade-web.vercel.app` is
-Vercel's domain, so if the Domains page asks for records you cannot add, move the
-site to a domain you control. Accounts do **not** migrate between the development
-and production instances — the cloud database is empty, so nothing is lost.
+The Clerk Dashboard's home page lists what is still needed. With proxying enabled
+no DNS record and no certificate step is involved — Clerk reaches the instance
+through this app. Confirm the two items that are easy to miss:
+
+- **Google credentials.** A production instance never uses Clerk's shared
+  credentials. Clerk must hold *your* OAuth client, and its Authorized Redirect
+  URI must be the proxy's (`https://saytrade-web.vercel.app/__clerk/v1/oauth_callback`).
+- **No `NEXT_PUBLIC_CLERK_PROXY_URL` locally.** Clerk does not proxy development
+  instances.
+
+Accounts do **not** migrate between the development and production instances — the
+cloud database is empty, so nothing is lost.
+
+### A production instance without a domain you own: the app proxy
+
+`clerk.saytrade-web.vercel.app` and `accounts.saytrade-web.vercel.app` resolve to
+Vercel's edge (64.29.17.131) and their TLS handshake dies with "unexpected eof".
+They resolve at all only because `*.vercel.app` is Vercel's wildcard, and Clerk's
+CNAME records cannot be added under a domain Vercel owns. So the CNAME route to a
+production instance is closed here.
+
+**The app proxy is the way through.** Clerk serves its Frontend API through this
+app's own domain at `/__clerk`, and no DNS record is involved. Three pieces:
+
+| Where | Setting | Value |
+| --- | --- | --- |
+| Clerk Dashboard | Domain → proxy | `https://saytrade-web.vercel.app/__clerk` |
+| `proxy.ts` | `clerkMiddleware` option | `{ frontendApiProxy: { enabled: true } }` |
+| `proxy.ts` | matcher | must include `"/__clerk/(.*)"` |
+| Vercel, Production | `NEXT_PUBLIC_CLERK_PROXY_URL` | `https://saytrade-web.vercel.app/__clerk/` |
+| FastAPI Cloud | `CLERK_FRONTEND_API` | `https://saytrade-web.vercel.app/__clerk` |
+
+The matcher entry matters: the general pattern skips paths that look like files,
+and Clerk's own endpoints end in `.json`, so `/__clerk/.well-known/jwks.json`
+would never reach the middleware without it.
+
+**The issuer becomes the proxy URL.** Ask Clerk directly instead of assuming:
+
+```
+curl -s https://saytrade-web.vercel.app/__clerk/.well-known/openid-configuration
+  issuer:   https://saytrade-web.vercel.app/__clerk
+  jwks_uri: https://saytrade-web.vercel.app/__clerk/.well-known/jwks.json
+```
+
+That is why `CLERK_FRONTEND_API` is the proxy URL and not the `clerk.…` host: the
+token's `iss` claim carries it. `HttpJwksFetcher` builds the JWKS URL from the
+issuer, and the same URL is reachable, so no code change was needed.
+
+Proof the backend can reach the keys: send a well-formed token with a key id that
+does not exist. The reply must be
+`401 {"detail":"no signing key found for kid '…'"}` — that message is only
+produced after a successful fetch. A `500` with `httpx.ConnectError` in the logs
+means the fetch failed.
+
+**Google sign-in.** The Authorized Redirect URI in Google must be the proxy's —
+copy the value Clerk shows on the Google connection page. If it points at
+`accounts.saytrade-web.vercel.app`, Google rejects the round trip.
+
+Local development is unaffected and must stay unproxied: Clerk does not support
+proxying for development instances, so `.env.local` keeps the development keys and
+no `NEXT_PUBLIC_CLERK_PROXY_URL`. `npm run dev` and `uvicorn` work as before.
 
 ### Checking the full path
 

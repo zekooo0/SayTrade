@@ -32,6 +32,26 @@ def test_valid_token_provisions_user(client):
     assert other.json()["user_id"] != user_id
 
 
+def test_clerk_keys_unreachable_is_503_not_401(client, monkeypatch):
+    """A Clerk outage must not look like a bad session.
+
+    Returning 401 would make the client discard a perfectly good session, so an
+    unreachable JWKS endpoint is a 503.
+    """
+    import httpx
+
+    class DeadFetcher:
+        async def get(self):
+            raise httpx.ConnectError("clerk is unreachable")
+
+    monkeypatch.setattr(client.app.state, "jwks", DeadFetcher(), raising=False)
+
+    resp = client.get("/me", headers=auth_headers())
+
+    assert resp.status_code == 503
+    assert "unavailable" in resp.json()["detail"].lower()
+
+
 def test_me_reports_usage(client):
     resp = client.get("/me", headers=auth_headers())
     assert resp.status_code == 200
@@ -40,4 +60,5 @@ def test_me_reports_usage(client):
     assert body["usage"]["voice_notes_limit"] == 2  # test-configured guard
     assert body["usage"]["voice_notes_used"] == 0
     assert body["usage"]["active_trades_limit"] == 3
-    assert body["entitlements"]["pro_price_usd"] == 5
+    # No price is exposed while Pro has no price on the page.
+    assert "pro_price_usd" not in body["entitlements"]
