@@ -45,6 +45,9 @@ class NoteView(BaseModel):
     status: str
     source: str
     trade_id: UUID | None = None
+    # The symbol this note belongs to: its trade's symbol, else the symbol the
+    # model read in the trader's words (an opening note has no trade yet).
+    symbol: str | None = None
     text: str | None = None
     summary: str | None = None
     proposal: dict[str, Any] | None = None

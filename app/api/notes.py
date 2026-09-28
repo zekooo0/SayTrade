@@ -176,6 +176,28 @@ async def retry_note(
         _raise_http(exc)
 
 
+@router.delete("/{note_id}", status_code=204)
+async def discard_note(
+    note_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Discard a note for good: the row, its audio, and the AI reading.
+
+    Only a note that was never approved can be discarded — an approved note is
+    the trade's history.
+    """
+    try:
+        await journal_service.discard_note(
+            session, user, note_id, request.app.state.storage
+        )
+    except DomainError as exc:
+        await session.rollback()
+        _raise_http(exc)
+    await session.commit()
+
+
 @router.post("/{note_id}/approve", response_model=ApproveResultView)
 async def approve_note(
     note_id: UUID,

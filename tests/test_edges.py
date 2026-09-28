@@ -7,6 +7,7 @@ from conftest import (
     drain,
     get_note,
     open_a_trade,
+    open_proposal,
     post_text,
     post_voice,
     proposal,
@@ -258,3 +259,96 @@ def test_text_note_can_open_a_trade_without_audio(client):
     assert note["audio_url"] is None
     assert approve(client, note["id"]).status_code == 200
     assert trades(client)[0]["symbol"] == "ETEL"
+
+
+def test_a_follow_up_note_carries_the_symbol_of_its_trade(client):
+    """A follow-up never repeats the symbol — the trader is already in the trade
+    — so the note takes it from the trade. Without this the review screen shows
+    an empty Symbol field on every follow-up."""
+    aaa = open_a_trade(client, symbol="AAA")
+
+    set_proposal(client, proposal([{"kind": "STOP", "stop": "88"}], symbol=None))
+    note = record_text(client, "I moved the stop to 88", trade_id=aaa["id"])
+
+    assert note["proposal"]["symbol"] is None  # the model said nothing
+    assert note["symbol"] == "AAA"  # the trade said it
+    assert approve(client, note["id"]).status_code == 200
+    assert get_note(client, note["id"])["symbol"] == "AAA"
+
+
+def test_a_follow_up_on_a_closed_trade_still_names_the_symbol(client):
+    """The trade is over, the note still belongs to it, and closed_at changes
+    nothing about that."""
+    aaa = open_a_trade(client, symbol="AAA")
+    set_proposal(client, proposal([{"kind": "CLOSE", "price": "110"}], symbol=None))
+    closing = record_text(client, "I closed AAA at 110", trade_id=aaa["id"])
+    assert closing["symbol"] == "AAA"
+    assert approve(client, closing["id"]).status_code == 200
+    assert trade(client, aaa["id"])["is_open"] is False
+
+    set_proposal(client, proposal([], symbol=None, summary="Post-mortem."))
+    after = record_text(client, "That exit was late", trade_id=aaa["id"])
+    assert after["symbol"] == "AAA"
+
+
+def test_an_opening_note_keeps_the_symbol_the_model_read(client):
+    """No trade exists yet on an opening note, so the model's symbol is all
+    there is — and it must survive approval."""
+    set_proposal(client, open_proposal(symbol="MSFT"))
+    note = record_text(client, "I opened Microsoft")
+    assert note["symbol"] == "MSFT"
+    assert approve(client, note["id"]).status_code == 200
+    assert get_note(client, note["id"])["symbol"] == "MSFT"
+
+
+def test_a_note_with_no_symbol_anywhere_reports_none(client):
+    """An observation note has no trade and the model named no symbol. That is a
+    real unknown, and it is reported as one."""
+    set_proposal(client, proposal([], symbol=None, summary="Just thinking."))
+    note = record_text(client, "The market felt heavy today")
+    assert note["symbol"] is None
+    assert approve(client, note["id"]).status_code == 200
+    assert get_note(client, note["id"])["symbol"] is None
+
+
+def test_a_journal_follow_up_borrows_the_only_open_trade(client):
+    """Recorded from the journal, so there is no trade context and the model
+    named no symbol. The only open trade is the answer the applier will reach,
+    so the review screen shows it instead of an empty field."""
+    open_a_trade(client, symbol="AAA")
+
+    set_proposal(client, proposal([{"kind": "CLOSE", "price": "110"}], symbol=None))
+    note = record_text(client, "I closed all the position at 110")
+
+    assert note["trade_id"] is None  # nothing was chosen yet
+    assert note["symbol"] == "AAA"  # but there is only one candidate
+    assert approve(client, note["id"]).status_code == 200
+    assert get_note(client, note["id"])["symbol"] == "AAA"
+
+
+def test_two_open_trades_leave_the_symbol_unknown(client):
+    """Two candidates is an honest unknown, not a coin flip. The applier will
+    ask the trader which trade the note belongs to."""
+    open_a_trade(client, symbol="AAA")
+    open_a_trade(client, symbol="BBB")
+
+    set_proposal(client, proposal([{"kind": "CLOSE", "price": "110"}], symbol=None))
+    note = record_text(client, "I closed all the position at 110")
+
+    assert note["symbol"] is None
+    blocked = approve(client, note["id"])
+    assert blocked.status_code == 422
+    assert "does not say which trade" in blocked.json()["detail"]
+
+
+def test_an_opening_note_never_inherits_an_open_trade_symbol(client):
+    """An opening note is a NEW trade. Even with one trade already open, it must
+    not be labelled with that trade's symbol."""
+    open_a_trade(client, symbol="AAA")
+
+    set_proposal(client, proposal(
+        [{"kind": "OPEN", "shares": "5", "price": "20"}], symbol=None, summary="Opened."
+    ))
+    note = record_text(client, "I opened a new position")
+
+    assert note["symbol"] is None

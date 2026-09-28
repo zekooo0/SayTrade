@@ -13,7 +13,7 @@ approval time — in the applier, where a trade is actually created.
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.billing.entitlements import Entitlements
@@ -152,6 +152,27 @@ async def _extraction_context(
     return str(trade.id), trade.symbol
 
 
+async def _staged_write(session: AsyncSession, note_id: UUID, **values) -> bool:
+    """Write a stage result, but only if the note is still there.
+
+    The trader can discard a note while the AI is still reading it. Deleting the
+    row is the trader's decision, so the pipeline must stop quietly instead of
+    writing to something that no longer exists. The UPDATE is its own test: no
+    matched row means the note is gone, and that is not an error.
+
+    The write goes through the Core statement rather than through the ORM object,
+    because a unit-of-work flush against a deleted row raises StaleDataError.
+    """
+    updated = await session.scalar(
+        update(Note).where(Note.id == note_id).values(**values).returning(Note.id)
+    )
+    if updated is None:
+        await session.rollback()
+        return False
+    await session.commit()
+    return True
+
+
 async def process_note(
     session_factory: async_sessionmaker[AsyncSession],
     note_id: UUID,
@@ -164,51 +185,84 @@ async def process_note(
     Idempotent per stage: a transcribed note is not transcribed again, and an
     extracted note is not extracted again. A failure records the stage that
     broke; a retry resumes from there.
+
+    A discarded note ends the run without a word: the row is gone, so every
+    write below is a no-op.
     """
     async with session_factory() as session:
         note = await session.get(Note, note_id)
         if note is None or note.status == STATUS_APPROVED:
             return
 
-        try:
-            if note.source == SOURCE_VOICE and not note.text:
-                if not note.audio_key:
-                    raise RuntimeError("the note has no stored audio")
-                audio = await storage.read(note.audio_key)
-                result = await transcriber.transcribe(
-                    audio, note.mime_type or "audio/m4a"
-                )
-                note.text = result.transcript
-                note.transcription_provider = result.provider
-                note.transcription_model = result.model
-                note.status = STATUS_TRANSCRIBED
-                await session.commit()
+        # Read the note once, into locals. Nothing below assigns to the ORM
+        # object, so it never becomes dirty and no flush can fight the discard.
+        source = note.source
+        text = note.text
+        audio_key = note.audio_key
+        mime_type = note.mime_type
+        status = note.status
 
-            if note.status != STATUS_EXTRACTED:
-                if not note.text:
+        try:
+            if source == SOURCE_VOICE and not text:
+                if not audio_key:
+                    raise RuntimeError("the note has no stored audio")
+                audio = await storage.read(audio_key)
+                result = await transcriber.transcribe(
+                    audio, mime_type or "audio/m4a"
+                )
+                text = result.transcript
+                status = STATUS_TRANSCRIBED
+                if not await _staged_write(
+                    session,
+                    note_id,
+                    text=text,
+                    transcription_provider=result.provider,
+                    transcription_model=result.model,
+                    status=status,
+                ):
+                    return
+
+            if status != STATUS_EXTRACTED:
+                if not text:
                     raise RuntimeError("the note has no text to read")
                 extracted = await extractor.extract(
-                    note.text,
+                    text,
                     recorded_at=note.created_at,
                     active_trade=await _extraction_context(session, note),
                 )
-                note.proposal = extracted.proposal
-                note.summary = extracted.summary
-                note.extraction_provider = extracted.provider
-                note.extraction_model = extracted.model
-                note.status = STATUS_EXTRACTED
-                note.failed_stage = None
-                note.error_message = None
-                await session.commit()
+                await _staged_write(
+                    session,
+                    note_id,
+                    proposal=extracted.proposal,
+                    summary=extracted.summary,
+                    extraction_provider=extracted.provider,
+                    extraction_model=extracted.model,
+                    status=STATUS_EXTRACTED,
+                    failed_stage=None,
+                    error_message=None,
+                )
         except Exception as exc:
-            note.status = STATUS_FAILED
-            note.failed_stage = (
-                "TRANSCRIPTION"
-                if note.source == SOURCE_VOICE and not note.text
-                else "EXTRACTION"
+            await _staged_write(
+                session,
+                note_id,
+                status=STATUS_FAILED,
+                failed_stage=(
+                    "TRANSCRIPTION"
+                    if source == SOURCE_VOICE and not text
+                    else "EXTRACTION"
+                ),
+                error_message=f"{type(exc).__name__}: {exc}"[:2000],
             )
-            note.error_message = f"{type(exc).__name__}: {exc}"[:2000]
-            await session.commit()
+
+
+async def _note_exists(session: AsyncSession, note_id: UUID) -> bool:
+    """Is the row still there?
+
+    A column-only select asks the database. `session.get()` would answer from
+    this session's identity map, which still holds the object after a discard
+    that happened in another session.
+    """
+    return (await session.scalar(select(Note.id).where(Note.id == note_id))) is not None
 
 
 async def get_note(session: AsyncSession, user: User, note_id: UUID) -> Note:
@@ -230,6 +284,48 @@ async def list_notes(
         .limit(limit)
     )
     return [await note_service.note_view(session, note) for note in rows]
+
+
+async def discard_note(
+    session: AsyncSession,
+    user: User,
+    note_id: UUID,
+    storage: AudioStorage,
+) -> None:
+    """Throw a note away for good: the row, its audio, and the AI reading.
+
+    Only a note the trader never approved can be discarded. Once a note has
+    changed a position, its change rows are the trade's history and they are not
+    deleted from under it — the trade page still shows what was decided, and a
+    reversal is a new note.
+
+    The recording goes with it: a discarded note must not leave audio behind in
+    storage. The row lock is deliberate, so a discard racing an approval cannot
+    delete a note whose changes were just applied.
+    """
+    note = await session.scalar(
+        select(Note)
+        .where(Note.id == note_id, Note.user_id == user.id)
+        .with_for_update()
+    )
+    if note is None:
+        raise NoteNotFoundError("No such note.")
+
+    if note.status == STATUS_APPROVED:
+        raise WrongNoteStateError(
+            "This note is approved, so it is part of the trade's history and "
+            "cannot be discarded. Record a new note to change the position."
+        )
+
+    if note.audio_key:
+        try:
+            await storage.delete(note.audio_key)
+        except Exception:
+            # The trader asked for the note to be gone; the row is the copy that
+            # matters, so a storage failure must not keep it alive.
+            pass
+
+    await session.delete(note)
 
 
 async def retry_note(
@@ -256,5 +352,9 @@ async def retry_note(
     note.error_message = None
     await session.commit()
     await process_note(session_factory, note.id, storage, transcriber, extractor)
+    if not await _note_exists(session, note.id):
+        # The trader discarded the note while this retry was running, so there
+        # is nothing left to refresh or to show.
+        raise NoteNotFoundError("This note was discarded while it was being read.")
     await session.refresh(note)
     return await note_service.note_view(session, note, storage)

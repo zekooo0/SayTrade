@@ -89,6 +89,53 @@ async def notes_for_trade(
     return [await note_view(session, note, storage) for note in rows]
 
 
+async def note_symbol(session: AsyncSession, note: Note) -> str | None:
+    """The symbol a note belongs to.
+
+    Order, and each step is a fact rather than a guess:
+
+    1. The symbol of the note's TRADE — the one it was recorded against, or the
+       one its changes were applied to (the applier stamps ``note.trade_id``).
+    2. The symbol the model read in the trader's words.
+    3. The only open trade, when the note changes a position but has no trade
+       context yet: it was recorded from the journal, so the trader never named
+       the trade, and there is exactly one candidate. This mirrors the applier's
+       own resolution (``_resolve_trade`` is the authority); with two or more
+       open trades the answer is genuinely unknown and stays None.
+
+    A note that OPENS a trade never falls to step 3: an opening note is a new
+    trade and cannot inherit the symbol of one already held.
+
+    Step 1 and 3 exist because a follow-up note never repeats the symbol — the
+    trader is already inside that trade — so the review screen would otherwise
+    show an empty Symbol field on every follow-up.
+    """
+    if note.trade_id is not None:
+        symbol = await session.scalar(
+            select(Trade.symbol).where(Trade.id == note.trade_id)
+        )
+        if symbol:
+            return symbol
+
+    proposal = note.proposal if isinstance(note.proposal, dict) else None
+    read = (proposal or {}).get("symbol")
+    if isinstance(read, str) and read.strip():
+        return read.strip()
+
+    changes = (proposal or {}).get("changes") or []
+    if not changes or any(c.get("kind") == "OPEN" for c in changes):
+        return None
+    open_symbols = list(
+        await session.scalars(
+            select(Trade.symbol)
+            .where(Trade.user_id == note.user_id, Trade.closed_at.is_(None))
+            .order_by(Trade.opened_at.desc())
+            .limit(2)
+        )
+    )
+    return open_symbols[0] if len(open_symbols) == 1 else None
+
+
 async def note_view(session: AsyncSession, note: Note, storage=None) -> NoteView:
     changes = await changes_for_note(session, note.id)
     audio_url = None
@@ -102,6 +149,7 @@ async def note_view(session: AsyncSession, note: Note, storage=None) -> NoteView
         status=note.status,
         source=note.source,
         trade_id=note.trade_id,
+        symbol=await note_symbol(session, note),
         text=note.text,
         summary=note.summary,
         proposal=note.proposal,

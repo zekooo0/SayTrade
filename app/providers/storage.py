@@ -32,6 +32,10 @@ class AudioStorage(Protocol):
 
     async def delivery_url(self, key: str) -> str: ...
 
+    async def delete(self, key: str) -> None:
+        """Remove the recording for good. Used when a note is discarded."""
+        ...
+
 
 class CloudinaryStorage:
     """Cloudinary-backed audio storage; the key IS the Cloudinary public_id.
@@ -115,6 +119,31 @@ class CloudinaryStorage:
 
         resolved = await asyncio.to_thread(_lookup)
         return resolved or await self.url(key)
+
+    async def delete(self, key: str) -> None:
+        """Remove the recording from Cloudinary, CDN copy included.
+
+        Called when a note is discarded: the trader asked for the note to be
+        gone, so the audio must not outlive it in a bucket.
+        """
+        self._require_config()
+        import cloudinary
+        from cloudinary.uploader import destroy
+
+        cloudinary.config(
+            cloud_name=self.cloud_name,
+            api_key=self.api_key,
+            api_secret=self.api_secret,
+            secure=True,
+        )
+
+        def _destroy() -> None:
+            result = destroy(key, resource_type="video", invalidate=True)
+            # `not found` is not a failure: the goal (no recording) is met.
+            if isinstance(result, dict) and result.get("error"):
+                raise RuntimeError(f"cloudinary destroy failed: {result['error']}")
+
+        await asyncio.to_thread(_destroy)
 
     async def url(self, key: str) -> str:
         self._require_config()

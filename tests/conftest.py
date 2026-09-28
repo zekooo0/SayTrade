@@ -88,7 +88,9 @@ class FakeJwks:
 class FakeStorage:
     def __init__(self):
         self.objects: dict[str, bytes] = {}
+        self.deleted: list[str] = []
         self.fail_save = False
+        self.fail_delete = False
 
     async def save(self, key: str, data: bytes, mime_type: str) -> None:
         if self.fail_save:
@@ -105,6 +107,12 @@ class FakeStorage:
 
     async def delivery_url(self, key: str) -> str:
         return await self.url(key)
+
+    async def delete(self, key: str) -> None:
+        if self.fail_delete:
+            raise RuntimeError("simulated storage outage")
+        self.deleted.append(key)
+        self.objects.pop(key, None)
 
 
 class FakeTranscriber:
