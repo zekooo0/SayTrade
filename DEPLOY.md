@@ -19,6 +19,21 @@ URL, Vercel gives the API its allowed origin.
 
 ## 1. Neon — the database
 
+Status: **done.** Project `misty-violet-59144510` (`saytrade`), region
+`aws-eu-central-1`, Postgres 18, branch `production` (the default branch), linked
+to this repo via `.neon`.
+
+The corrected connection string is in **`.env.neon`** (gitignored): asyncpg
+scheme, `ssl=require`, direct host. Paste its `DATABASE_URL` value into Render.
+
+> **`neon link` overwrites `DATABASE_URL` in `.env`** with the *pooler* host under
+> the plain `postgresql://` scheme plus `channel_binding=require` — three things
+> this app cannot use, and your local docker URL is gone. `neon env pull` writes
+> into `.env` the same way. Always pull with `--file .env.neon`, or repair `.env`
+> afterwards and verify by connecting through `app.config.settings`.
+
+The original steps, for reference:
+
 1. Sign in at neon.com (GitHub login is fine), create a project.
 2. Region: **eu-central-1 (Frankfurt)** — same city as the Render service, so
    every query stays inside Europe.
