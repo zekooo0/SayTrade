@@ -1,6 +1,6 @@
 """Auth boundary: Clerk token verification and user provisioning."""
 
-from conftest import TEST_ISSUER, auth_headers, mint_token
+from conftest import TEST_ISSUER, auth_headers, mint_token, on_free
 
 
 def test_no_token_401(client):
@@ -53,6 +53,7 @@ def test_clerk_keys_unreachable_is_503_not_401(client, monkeypatch):
 
 
 def test_me_reports_usage(client):
+    on_free(client)  # a new account is PRO; these are the Free numbers
     resp = client.get("/me", headers=auth_headers())
     assert resp.status_code == 200
     body = resp.json()

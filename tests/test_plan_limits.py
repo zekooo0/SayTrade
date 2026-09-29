@@ -5,6 +5,7 @@ from conftest import (
     approve,
     auth_headers,
     drain,
+    on_free,
     open_a_trade,
     open_proposal,
     post_text,
@@ -17,7 +18,23 @@ from conftest import (
 )
 
 
+def test_a_new_account_starts_on_pro(client):
+    """Pro has no price and no payment provider, so a new account gets
+    everything from its first request. An operator can still move one down."""
+    body = client.get("/me", headers=auth_headers()).json()
+
+    assert body["plan"] == "PRO"
+    assert body["usage"]["active_trades_limit"] is None  # unlimited
+
+    # The switch still works the other way, which is what makes FREE real.
+    set_plan("user_test1", "FREE")
+    body = client.get("/me", headers=auth_headers()).json()
+    assert body["plan"] == "FREE"
+    assert body["usage"]["active_trades_limit"] == 3
+
+
 def test_the_free_plan_holds_three_active_trades(client):
+    on_free(client)
     open_a_trade(client, symbol="AAA")
     open_a_trade(client, symbol="BBB")
     open_a_trade(client, symbol="CCC")
@@ -47,6 +64,7 @@ def test_the_free_plan_holds_three_active_trades(client):
 
 def test_a_follow_up_is_never_blocked_by_the_trade_limit(client):
     """The limit is on opening trades. A note on a trade you hold always works."""
+    on_free(client)
     aaa = open_a_trade(client, symbol="AAA")
     open_a_trade(client, symbol="BBB")
     open_a_trade(client, symbol="CCC")
@@ -58,6 +76,7 @@ def test_a_follow_up_is_never_blocked_by_the_trade_limit(client):
 
 
 def test_pro_lifts_the_trade_limit(client):
+    on_free(client)  # three opens below sit exactly on the Free limit
     for symbol in ("AAA", "BBB", "CCC"):
         open_a_trade(client, symbol=symbol)
 
@@ -72,6 +91,7 @@ def test_pro_lifts_the_trade_limit(client):
 
 
 def test_the_monthly_voice_guard_caps_ai_spend(client):
+    on_free(client)  # the guard is the Free plan's; Pro has no voice limit
     assert post_voice(client).status_code == 201
     assert post_voice(client).status_code == 201
 
@@ -88,6 +108,8 @@ def test_the_monthly_voice_guard_caps_ai_spend(client):
 
 
 def test_the_voice_guard_is_per_user(client):
+    for sub in ("user_a", "user_b"):
+        on_free(client, sub)  # provisions the account, then moves it to FREE
     assert post_voice(client, sub="user_a").status_code == 201
     assert post_voice(client, sub="user_a").status_code == 201
     assert post_voice(client, sub="user_a").status_code == 402
@@ -98,6 +120,7 @@ def test_a_failed_note_still_counts_against_the_guard(client):
     """The AI already ran, so the unit is spent and the retry is free."""
     from app.main import app
 
+    on_free(client)
     app.state.extractor.fail = True
     resp = post_voice(client)
     note = drain(client, resp.json()["id"])
@@ -117,6 +140,7 @@ def test_a_failed_note_still_counts_against_the_guard(client):
 
 
 def test_the_usage_view_describes_the_plan(client):
+    on_free(client)  # this asserts the Free numbers; Pro has no limits
     open_a_trade(client, symbol="AAA")
 
     body = client.get("/me", headers=auth_headers()).json()

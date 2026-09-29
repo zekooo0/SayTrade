@@ -32,9 +32,11 @@ class User(Base):
     )
 
     # The plan this account is on: FREE or PRO. Stored, not derived, so a plan
-    # can be switched by hand until a payment provider exists.
+    # can be switched by hand until a payment provider exists. A new account is
+    # provisioned as PRO (see provision_user); this default is the safety net
+    # for a row inserted without the column.
     plan: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default=text("'FREE'")
+        String(16), nullable=False, server_default=text("'PRO'")
     )
 
     created_at: Mapped[datetime] = mapped_column(

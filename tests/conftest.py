@@ -245,17 +245,37 @@ async def reset_database() -> None:
 
 
 def set_plan(sub: str, plan: str) -> None:
-    """Switch a test user's plan, the way an operator would by hand."""
+    """Switch a test user's plan, the way an operator would by hand.
+
+    Fails loudly when there is no such row. A silent no-op here means the test
+    is really running against a freshly provisioned account — which is PRO — so
+    every later assertion about FREE would be a lie.
+    """
     import asyncio
 
-    async def _update() -> None:
+    async def _update() -> int:
         async with engine.begin() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 text("UPDATE users SET plan = :plan WHERE clerk_sub = :sub"),
                 {"plan": plan, "sub": sub},
             )
+            return result.rowcount
 
-    asyncio.run(_update())
+    if not asyncio.run(_update()):
+        raise AssertionError(
+            f"set_plan: no user row for {sub!r}. Provision the account first — "
+            "a request to /me does it. A new account is PRO, not FREE."
+        )
+
+
+def on_free(client: TestClient, sub: str = "user_test1") -> None:
+    """Put a test account on FREE.
+
+    A new account is provisioned as PRO, so a test about the Free plan has to
+    say so. The /me call creates the row that set_plan then updates.
+    """
+    client.get("/me", headers=auth_headers(sub))
+    set_plan(sub, "FREE")
 
 
 @pytest.fixture
