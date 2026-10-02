@@ -119,11 +119,24 @@ class FakeTranscriber:
     def __init__(self, transcript: str = "default transcript"):
         self.transcript = transcript
         self.fail = False
+        self.calls: list[dict] = []
 
-    async def transcribe(self, data: bytes, mime_type: str) -> TranscriptionResult:
+    async def transcribe(self, data, mime_type, keywords=(), languages=()):
+        self.calls.append(
+            {
+                "mime_type": mime_type,
+                "keywords": list(keywords),
+                "languages": list(languages),
+            }
+        )
         if self.fail:
             raise RuntimeError("simulated transcription outage")
-        return TranscriptionResult(transcript=self.transcript, provider="fake", model="fake-1")
+        return TranscriptionResult(
+            transcript=self.transcript,
+            provider="fake",
+            model="fake-1",
+            language="ar",
+        )
 
 
 def proposal(
@@ -134,11 +147,25 @@ def proposal(
 ) -> dict:
     """A proposal body.
 
+    ``symbol`` becomes a security candidate, because that is what the extractor
+    returns now: the model proposes companies and the symbols table decides
+    which of them trade in the note's market. Tests that pass a ticker here are
+    describing what the model thought it heard.
+
     ``summary`` is accepted and ignored: a summary is written by the app from
     the changes, never read out of the trader's words. It stays in the signature
     because tests pass it to describe the note they are simulating.
     """
-    return {"language": language, "symbol": symbol, "changes": changes}
+    candidates = (
+        [{"exchange": None, "ticker": symbol, "name": symbol, "aliases": []}]
+        if symbol
+        else []
+    )
+    return {
+        "language": language,
+        "security_candidates": candidates,
+        "changes": changes,
+    }
 
 
 def open_proposal(
@@ -170,9 +197,16 @@ class FakeExtractor:
         self.fail = False
         self.calls: list[dict] = []
 
-    async def extract(self, transcript: str, recorded_at=None, active_trade=None) -> ExtractionResult:
+    async def extract(
+        self, transcript: str, recorded_at=None, active_trade=None, market=None
+    ) -> ExtractionResult:
         self.calls.append(
-            {"transcript": transcript, "recorded_at": recorded_at, "active_trade": active_trade}
+            {
+                "transcript": transcript,
+                "recorded_at": recorded_at,
+                "active_trade": active_trade,
+                "market": market,
+            }
         )
         if self.fail:
             raise RuntimeError("simulated extraction outage")
@@ -240,8 +274,74 @@ async def reset_database() -> None:
         )
     async with engine.begin() as conn:
         await conn.execute(
-            text("TRUNCATE changes, notes, trades, users RESTART IDENTITY CASCADE")
+            text(
+                "TRUNCATE changes, notes, trades, portfolios, users "
+                "RESTART IDENTITY CASCADE"
+            )
         )
+        await _seed_symbols(conn)
+    # The markets the helpers created went with the rows.
+    _MARKETS.clear()
+
+
+# The symbols the suite speaks. The resolver refuses a ticker that is not in the
+# note's market's own list, so the test database needs the ones the fixtures
+# name — without them every symbol in a test resolves to nothing. The real table
+# is 5.5k rows; this is the handful the tests use. `symbols` is not truncated
+# above, so this runs once per session.
+TEST_SYMBOLS = [
+    ("US", "NVDA", "NVIDIA Corporation", "NASDAQ"),
+    ("US", "AAPL", "Apple Inc", "NASDAQ"),
+    ("US", "TSLA", "Tesla Inc", "NASDAQ"),
+    ("US", "MSFT", "Microsoft Corporation", "NASDAQ"),
+    ("US", "AMZN", "Amazon.com Inc", "NASDAQ"),
+    # Placeholders the suite uses for "some other trade". ZZZZ and MTSS are
+    # deliberately absent: tests use them as the ticker that must NOT resolve.
+    ("US", "AAA", "AAA Holdings", "NYSE"),
+    ("US", "BBB", "BBB Industries", "NYSE"),
+    ("US", "CCC", "CCC Corporation", "NYSE"),
+    ("US", "DDD", "DDD Incorporated", "NYSE"),
+    ("EGX", "SWDY", "ELSWEDY ELECTRIC", "EGX"),
+    ("EGX", "ABUK", "Abou Kir Fertilizers", "EGX"),
+    ("EGX", "COMI", "Commercial International Bank (Egypt)", "EGX"),
+    ("EGX", "EAST", "Eastern Tobacco", "EGX"),
+    ("EGX", "AMOC", "Alexandria Mineral Oils Company", "EGX"),
+    ("EGX", "ETEL", "Telecom Egypt", "EGX"),
+]
+
+_symbols_seeded = False
+
+
+async def _seed_symbols(conn) -> None:
+    """Load the test symbols.
+
+    The test database carries only what the suite speaks: the resolver refuses a
+    ticker that is not in the note's market's own list, so without these every
+    symbol in a test resolves to nothing. Written to be safe to run more than
+    once — a previous run's rows are cleared first. This runs against a database
+    whose name ends in `_test`, which `reset_database` has already enforced.
+    """
+    global _symbols_seeded
+    if _symbols_seeded:
+        return
+    await conn.execute(text("DELETE FROM symbol_aliases"))
+    await conn.execute(text("DELETE FROM symbols"))
+    for market, ticker, name, venue in TEST_SYMBOLS:
+        await conn.execute(
+            text(
+                "INSERT INTO symbols (id, market, ticker, name, exchange) "
+                "VALUES (gen_random_uuid(), :market, :ticker, :name, :venue)"
+            ),
+            {"market": market, "ticker": ticker, "name": name, "venue": venue},
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO symbol_aliases (id, market, ticker, alias) "
+                "VALUES (gen_random_uuid(), :market, :ticker, :alias)"
+            ),
+            {"market": market, "ticker": ticker, "alias": name.lower()},
+        )
+    _symbols_seeded = True
 
 
 def set_plan(sub: str, plan: str) -> None:
@@ -310,10 +410,19 @@ def client():
 TERMINAL_STATUSES = {"EXTRACTED", "FAILED"}
 
 
-def post_voice(client: TestClient, sub: str = "user_test1", trade_id: str | None = None):
+def post_voice(
+    client: TestClient,
+    sub: str = "user_test1",
+    trade_id: str | None = None,
+    portfolio_id: str | None = None,
+):
     data = {"duration_ms": "30000"}
     if trade_id:
         data["trade_id"] = trade_id
+    # A note with no trade must name a market; tests that do not care get one.
+    market = portfolio_id or (None if trade_id else ensure_market(client, sub))
+    if market:
+        data["portfolio_id"] = market
     return client.post(
         "/notes/voice",
         headers=auth_headers(sub),
@@ -322,10 +431,44 @@ def post_voice(client: TestClient, sub: str = "user_test1", trade_id: str | None
     )
 
 
-def post_text(client: TestClient, body: str, sub: str = "user_test1", trade_id: str | None = None):
+_MARKETS: dict[str, str] = {}
+
+
+def ensure_market(client: TestClient, sub: str = "user_test1") -> str:
+    """A market for a test user, created through the API the app uses.
+
+    A note needs somewhere to go: either a trade to follow up on, or a market to
+    record into. Tests that do not care which market they record into get this
+    one, created once per user per test.
+    """
+    if sub not in _MARKETS:
+        existing = client.get("/portfolios", headers=auth_headers(sub)).json()
+        if existing:
+            _MARKETS[sub] = existing[0]["id"]
+        else:
+            created = client.post(
+                "/portfolios",
+                headers=auth_headers(sub),
+                json={"name": "Test market", "exchange": "US"},
+            )
+            _MARKETS[sub] = created.json()["id"]
+    return _MARKETS[sub]
+
+
+def post_text(
+    client: TestClient,
+    body: str,
+    sub: str = "user_test1",
+    trade_id: str | None = None,
+    portfolio_id: str | None = None,
+):
     payload: dict = {"text": body}
     if trade_id:
         payload["trade_id"] = trade_id
+    # A note with no trade must name a market; tests that do not care get one.
+    payload["portfolio_id"] = portfolio_id or (
+        None if trade_id else ensure_market(client, sub)
+    )
     return client.post("/notes/text", headers=auth_headers(sub), json=payload)
 
 
@@ -372,9 +515,15 @@ def trade(client: TestClient, trade_id: str, sub: str = "user_test1") -> dict:
     return resp.json()
 
 
-def record_text(client: TestClient, body: str, sub: str = "user_test1", trade_id: str | None = None) -> dict:
+def record_text(
+    client: TestClient,
+    body: str,
+    sub: str = "user_test1",
+    trade_id: str | None = None,
+    portfolio_id: str | None = None,
+) -> dict:
     """Post a typed note and wait for extraction. Returns the note view."""
-    resp = post_text(client, body, sub, trade_id)
+    resp = post_text(client, body, sub, trade_id, portfolio_id)
     assert resp.status_code == 201, resp.text
     return drain(client, resp.json()["id"], sub)
 

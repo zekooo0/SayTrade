@@ -25,6 +25,15 @@ class NoteNotFoundError(DomainError):
     status_code = 404
 
 
+class PortfolioNotFoundError(DomainError):
+    """404: the Portfolio does not exist or does not belong to the user.
+
+    Deliberately identical for foreign ids, like TradeNotFoundError.
+    """
+
+    status_code = 404
+
+
 class WrongNoteStateError(DomainError):
     """409: the note is not in the state required for this operation."""
 
@@ -45,6 +54,18 @@ class IncompleteNoteError(DomainError):
     """422: the note is missing a value the change needs.
 
     Names the missing value so the trader can fill it in the review screen.
+    """
+
+    status_code = 422
+
+
+class MarketRequiredError(DomainError):
+    """422: the note has nowhere to go.
+
+    Every note belongs to a trade to follow up on, or to a market to record into.
+    Without one, the trade it opens would belong to no market — and markets never
+    mix, so there is nothing sensible to do with it. The trader creates a market
+    first; the app does not invent one.
     """
 
     status_code = 422

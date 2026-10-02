@@ -1,5 +1,11 @@
 """The AI proposal for one note.
 
+The model does not name a ticker and have it believed. It proposes companies —
+``security_candidates`` — and the symbols table decides which of those actually
+trade in the market the note was recorded into. A candidate whose ticker is not
+in that market is dropped, so a misheard word cannot become a confident, wrong
+symbol. What survives is a proposal the trader reviews and approves.
+
 Every field is optional at proposal time. The rule from the product spec is
 hard: the model must never invent a value it was not given. Completeness is
 therefore enforced at approval, in app/services/notes.py, with an error that
@@ -10,7 +16,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 Kind = Literal["OPEN", "ADD", "TRIM", "STOP", "TARGET", "CLOSE"]
 
@@ -35,13 +41,53 @@ class ChangeProposal(BaseModel):
     fraction: Decimal | None = Field(default=None, gt=0, lt=1)
 
 
+class SecurityCandidate(BaseModel):
+    """One company the model thinks the note is about.
+
+    A proposal, never a fact. ``ticker`` is checked against the symbols table for
+    the note's market and dropped if it does not trade there; ``name`` is what
+    the lookup falls back to when the model named no ticker, or named one that
+    failed that check. ``aliases`` are the words the trader actually used —
+    carried so the review can show them, and written nowhere.
+    """
+
+    exchange: str | None = None
+    ticker: str | None = None
+    name: str | None = None
+    aliases: list[str] = Field(default_factory=list)
+
+    @field_validator("exchange", "ticker", "name", mode="before")
+    @classmethod
+    def _an_absent_value_is_none(cls, value):
+        """The string "null" is absence, not a value.
+
+        gpt-4o-mini answers with the literal string when it means nothing, and
+        left alone it becomes a trade whose ticker is NULL — which the trader
+        then has to find and delete.
+        """
+        if isinstance(value, str) and value.strip().lower() in {
+            "",
+            "null",
+            "none",
+            "n/a",
+        }:
+            return None
+        return value
+
+    @field_validator("aliases", mode="before")
+    @classmethod
+    def _drop_empty_aliases(cls, value):
+        if not isinstance(value, list):
+            return []
+        return [
+            alias.strip()
+            for alias in value
+            if isinstance(alias, str) and alias.strip()
+        ]
+
+
 class NoteProposal(BaseModel):
     """What the AI read in one note.
-
-    ``symbol`` is the instrument. It is required only when a change opens a
-    trade (or when a follow-up must be matched to an open trade by symbol). A
-    symbol the model read is a CANDIDATE: it resolves a trade only by matching
-    one the trader already holds (see resolve_note_trade).
 
     ``language`` is the language the note is spoken in ("en" or "ar"). The
     action summary is written in it.
@@ -54,5 +100,5 @@ class NoteProposal(BaseModel):
     """
 
     language: str | None = None
-    symbol: str | None = None
+    security_candidates: list[SecurityCandidate] = Field(default_factory=list)
     changes: list[ChangeProposal] = Field(default_factory=list)

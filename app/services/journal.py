@@ -18,18 +18,22 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.billing.entitlements import Entitlements
 from app.domain.errors import (
+    MarketRequiredError,
+    PortfolioNotFoundError,
     NoteNotFoundError,
     StorageUnavailableError,
     TradeNotFoundError,
     WrongNoteStateError,
 )
-from app.models import Note, Trade, User
-from app.providers.extraction import Extractor
+from app.models import Note, Portfolio, Trade, User
+from app.providers.extraction import Extractor, MarketContext
 from app.providers.storage import AudioStorage
-from app.providers.transcription import Transcriber
+from app.providers.transcription import Transcriber, transcription_keywords
 from app.schemas.api import NoteView
+from app.log import get_logger
 from app.services import notes as note_service
 from app.services import summary as summary_service
+from app.services import symbols as symbols_service
 from app.services.notes import (
     STATUS_APPROVED,
     STATUS_EXTRACTED,
@@ -40,6 +44,8 @@ from app.services.notes import (
 
 SOURCE_VOICE = "VOICE"
 SOURCE_TEXT = "TEXT"
+
+log = get_logger("saytrade.journal")
 
 
 def new_storage_key(user_id: UUID, mime_type: str) -> str:
@@ -67,6 +73,40 @@ async def _owned_trade_or_404(
     return trade.id
 
 
+def _require_a_home(trade_id: UUID | None, portfolio_id: UUID | None) -> None:
+    """A note must have somewhere to go: a trade to follow up on, or a market to
+    record into.
+
+    Without either, the trade the note opens would belong to no market, and
+    markets never mix — there is nothing sensible to do with it. The trader
+    creates a market first; the app does not invent one.
+    """
+    if trade_id is None and portfolio_id is None:
+        raise MarketRequiredError(
+            "Create a market first, or record the note from a trade page."
+        )
+
+
+async def _owned_portfolio_or_404(
+    session: AsyncSession, user: User, portfolio_id: UUID | None
+) -> UUID | None:
+    """The portfolio must exist and belong to this trader.
+
+    A guessed id is a 404, never a silent NULL: the note would otherwise land in
+    no market, and the trade it opens would mix with another market's.
+    """
+    if portfolio_id is None:
+        return None
+    portfolio = await session.scalar(
+        select(Portfolio).where(
+            Portfolio.id == portfolio_id, Portfolio.user_id == user.id
+        )
+    )
+    if portfolio is None:
+        raise PortfolioNotFoundError("Portfolio not found")
+    return portfolio.id
+
+
 async def receive_voice_note(
     session: AsyncSession,
     user: User,
@@ -76,6 +116,7 @@ async def receive_voice_note(
     storage: AudioStorage,
     entitlements: Entitlements,
     trade_id: UUID | None = None,
+    portfolio_id: UUID | None = None,
     now: datetime | None = None,
 ) -> NoteView:
     """Reserve one allowance unit, persist the RECEIVED note, store the audio.
@@ -85,12 +126,17 @@ async def receive_voice_note(
     marked FAILED(STORAGE) and the client must re-record.
     """
     now = now or datetime.now(timezone.utc)
+    # Before the allowance is spent: a note that cannot go anywhere must not cost
+    # the trader a voice unit.
+    _require_a_home(trade_id, portfolio_id)
     await entitlements.reserve_voice(session, user, now)
     owned_trade_id = await _owned_trade_or_404(session, user, trade_id)
+    owned_portfolio_id = await _owned_portfolio_or_404(session, user, portfolio_id)
 
     note = Note(
         user_id=user.id,
         trade_id=owned_trade_id,
+        portfolio_id=owned_portfolio_id,
         source=SOURCE_VOICE,
         status=STATUS_RECEIVED,
         audio_key=new_storage_key(user.id, mime_type),
@@ -121,12 +167,16 @@ async def receive_text_note(
     user: User,
     text: str,
     trade_id: UUID | None = None,
+    portfolio_id: UUID | None = None,
 ) -> NoteView:
     """A typed note. No allowance unit: it skips transcription."""
+    _require_a_home(trade_id, portfolio_id)
     owned_trade_id = await _owned_trade_or_404(session, user, trade_id)
+    owned_portfolio_id = await _owned_portfolio_or_404(session, user, portfolio_id)
     note = Note(
         user_id=user.id,
         trade_id=owned_trade_id,
+        portfolio_id=owned_portfolio_id,
         source=SOURCE_TEXT,
         status=STATUS_RECEIVED,
         text=text,
@@ -151,6 +201,32 @@ async def _extraction_context(
     if trade is None:
         return None
     return str(trade.id), trade.symbol
+
+
+async def _market_context(session: AsyncSession, note: Note) -> MarketContext | None:
+    """The market a note was recorded into, with the tickers held there.
+
+    None for a follow-up: it has no market of its own, and the trade it belongs
+    to is already in the extractor's context.
+    """
+    if note.portfolio_id is None:
+        return None
+    portfolio = await session.get(Portfolio, note.portfolio_id)
+    if portfolio is None:
+        return None
+    symbols = list(
+        await session.scalars(
+            select(Trade.symbol)
+            .where(Trade.portfolio_id == portfolio.id, Trade.closed_at.is_(None))
+            .distinct()
+        )
+    )
+    return MarketContext(
+        name=portfolio.name,
+        currency=portfolio.currency,
+        symbols=tuple(symbols),
+        exchange=portfolio.exchange,
+    )
 
 
 async def _staged_write(session: AsyncSession, note_id: UUID, **values) -> bool:
@@ -209,17 +285,26 @@ async def process_note(
                 if not audio_key:
                     raise RuntimeError("the note has no stored audio")
                 audio = await storage.read(audio_key)
+                # The decoder hints: the tickers this market holds, and the two
+                # languages the trader records in. Without them the model reads
+                # Egyptian colloquial Arabic badly and loses the numbers.
+                market = await _market_context(session, note)
                 result = await transcriber.transcribe(
-                    audio, mime_type or "audio/m4a"
+                    audio,
+                    mime_type or "audio/m4a",
+                    keywords=transcription_keywords(market.symbols if market else ()),
+                    languages=("ar", "en"),
                 )
                 text = result.transcript
                 status = STATUS_TRANSCRIBED
+                log.info("note %s: transcribed, %d characters", note_id, len(text))
                 if not await _staged_write(
                     session,
                     note_id,
                     text=text,
                     transcription_provider=result.provider,
                     transcription_model=result.model,
+                    transcription_language=result.language,
                     status=status,
                 ):
                     return
@@ -227,25 +312,41 @@ async def process_note(
             if status != STATUS_EXTRACTED:
                 if not text:
                     raise RuntimeError("the note has no text to read")
+                market = await _market_context(session, note)
+                log.info(
+                    "note %s: extracting | market=%s | text=%r",
+                    note_id,
+                    market.name if market else None,
+                    text,
+                )
                 extracted = await extractor.extract(
                     text,
                     recorded_at=note.created_at,
                     active_trade=await _extraction_context(session, note),
+                    market=market,
                 )
                 # The summary is written from the changes, never from the
                 # transcript, so it cannot repeat a mishearing. Written here so
                 # the review screen has the line, and written again at approval
                 # from the rows that are actually applied.
                 proposal = extracted.proposal or {}
+                # The symbol in that line is the one the market's own list
+                # confirms, never the model's word for it.
+                found = await symbols_service.resolve_candidates(
+                    session,
+                    market.exchange if market else None,
+                    proposal.get("security_candidates") or [],
+                )
                 summary = await summary_service.write_summary(
                     proposal.get("changes") or [],
-                    symbol=proposal.get("symbol"),
+                    symbol=found[0].ticker if found else None,
                     language=summary_service.language_of(
                         proposal.get("language"), text
                     ),
                     summarizer=summarizer,
                     text=text,
                 )
+                log.info("note %s: summary -> %r", note_id, summary)
                 await _staged_write(
                     session,
                     note_id,

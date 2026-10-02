@@ -1,12 +1,18 @@
 """Extraction boundary: the trader's words in, a proposed change list out.
 
-JSON mode (not OpenAI "structured outputs" strict mode): gpt-4o-mini's
-strict-schema path rejects or starves on complex shapes, so we use plain
-json_object mode with one automatic retry and keep Pydantic re-validation as
-the hard boundary between the model and the domain.
+JSON mode (not OpenAI "structured outputs" strict mode): the strict-schema path
+rejects or starves on complex shapes, so we use plain json_object mode with one
+automatic retry and keep Pydantic re-validation as the hard boundary between the
+model and the domain.
+
+The model does not name a ticker and have it believed. It proposes companies —
+`security_candidates` — and app/services/symbols.py decides which of those trade
+in the note's market, against the vendored reference. That is what stops a
+misheard word becoming a confident, wrong ticker.
 
 The model is told what we already know (the recording time, the trade the note
-was recorded against) so it never has to invent those facts.
+was recorded against, the market it belongs to and the tickers held there) so it
+never has to invent those facts.
 """
 
 import asyncio
@@ -17,7 +23,10 @@ from typing import Any, Protocol
 
 from pydantic import ValidationError
 
+from app.log import get_logger
 from app.schemas.proposal import NoteProposal
+
+log = get_logger("saytrade.extraction")
 
 EXTRACTION_SYSTEM_PROMPT = """You read one spoken trade note from a trader (English or Arabic) and return the position changes it holds.
 
@@ -27,7 +36,14 @@ Return ONE JSON object with exactly these keys:
 
 {
   "language": "<the language the note is spoken in: en or ar>",
-  "symbol": "<ticker, e.g. NVDA, or null>",
+  "security_candidates": [
+    {
+      "exchange": "<the exchange code you believe it trades on>",
+      "ticker": "<its ticker, or null>",
+      "name": "<the company name in English>",
+      "aliases": ["<the words the trader used for it>"]
+    }
+  ],
   "changes": [
     {
       "kind": "OPEN | ADD | TRIM | STOP | TARGET | CLOSE",
@@ -54,7 +70,7 @@ Rules. A broken rule is a failed extraction:
 2. Never do arithmetic. For "half", "a third", "30% of my position" use fraction (0.5, 0.3333, 0.3). The backend computes the shares from the real position.
 3. One note can hold several changes ("I sold half and moved the stop to 9.5"). Keep them in spoken order.
 4. A note with no change is valid: use an empty changes list. Example: "I saw a reverse candle, I will wait for tomorrow."
-5. symbol only when the trader names the instrument. Use the market ticker: "Nvidia" -> NVDA, "اموك" -> AMOC. NEVER invent a ticker: a wrong ticker is worse than a null one, because the trader then has to fix the trade it points at. If you are not sure which instrument the trader means, use null. Use null when the trader does not name it.
+5. security_candidates: the companies this note is about. The trader may say a ticker, or a company name in Arabic or in English. For each company give the exchange you believe it trades on, its ticker, the company name in English, and the words the trader used for it. These are PROPOSALS: the backend checks each ticker against that market's own list of what trades there and discards the ones that are not on it, so list only companies you actually recognise, and never pad the list. Leave it empty when the note names no company.
 6. A stop that applies to one added part only ("the stop for this part is 10.5") is NOT a change and NOT a STOP. Leave stop null on the ADD. That part stop stays in the trader's own words.
 7. occurred_at only when the trader states a time ("yesterday", "this morning"): ISO 8601, using the recording date for relative words. If no recording timestamp is given, leave occurred_at null. NEVER invent a date.
 8. "I sold all", "I am out", "I closed it" with no amount means CLOSE.
@@ -72,12 +88,33 @@ class ExtractionResult:
     model: str
 
 
+@dataclass(frozen=True)
+class MarketContext:
+    """The market a note is recorded into.
+
+    The extractor is handed the trader's own name for it, its currency, and the
+    tickers they already hold there. That is what stops a misheard ticker from
+    becoming a confident, wrong symbol — in the wrong market.
+
+    Defined above the Protocol: the Protocol annotates a parameter with it, and
+    that annotation is evaluated when this module is imported.
+    """
+
+    name: str
+    currency: str | None
+    symbols: tuple[str, ...]
+    # The product's market code: "EGX" or "US". The model needs it to judge
+    # whether a company it recognises trades here at all.
+    exchange: str | None = None
+
+
 class Extractor(Protocol):
     async def extract(
         self,
         transcript: str,
         recorded_at: datetime | None = None,
         active_trade: tuple[str, str] | None = None,
+        market: MarketContext | None = None,
     ) -> ExtractionResult: ...
 
 
@@ -88,7 +125,7 @@ class OpenAIExtractor:
     writes to the database.
     """
 
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
+    def __init__(self, api_key: str, model: str = "gpt-6-luna"):
         self.api_key = api_key
         self.model = model
 
@@ -104,6 +141,7 @@ class OpenAIExtractor:
         transcript: str,
         recorded_at: datetime | None = None,
         active_trade: tuple[str, str] | None = None,
+        market: MarketContext | None = None,
     ) -> ExtractionResult:
         client = self._client()
 
@@ -120,6 +158,22 @@ class OpenAIExtractor:
                 f"trade (id {trade_id}). The note is about that trade."
             )
 
+        if market is not None:
+            held = ", ".join(market.symbols) if market.symbols else "nothing yet"
+            where = market.exchange or market.name
+            currency = f", currency {market.currency}" if market.currency else ""
+            context += (
+                f'\n\nThe note is recorded into the trader\'s "{market.name}" market'
+                f" — {where}{currency}. Tickers already held there: {held}.\n"
+                "A trader recording into this market is talking about a company "
+                "listed here, not one from another exchange. Offer only companies "
+                "you believe trade in this market: a ticker that does not is "
+                "discarded before the trader ever sees it, so offering one only "
+                "costs them the symbol.\n"
+                "The tickers listed as held above are a hint about what they watch, "
+                "not a limit on what they may name."
+            )
+
         def _call(user_content: str) -> str:
             response = client.chat.completions.create(
                 model=self.model,
@@ -127,13 +181,22 @@ class OpenAIExtractor:
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
                     {"role": "user", "content": user_content},
                 ],
-                temperature=0,
+                # No temperature: the GPT-5 and GPT-6 families reject anything but
+                # the default and answer 400 ("temperature does not support 0 with
+                # this model"). Determinism comes from the schema and the retry,
+                # not from sampling.
                 response_format={"type": "json_object"},
             )
             return response.choices[0].message.content or ""
 
         last_error: Exception | None = None
         for attempt in range(2):
+            log.info(
+                "extract: %s reading %d characters%s",
+                self.model,
+                len(transcript),
+                " (retry)" if attempt else "",
+            )
             content = await asyncio.to_thread(
                 _call,
                 context
@@ -144,16 +207,25 @@ class OpenAIExtractor:
                     else ""
                 ),
             )
+            log.debug("extract: raw model output: %s", content)
             try:
                 parsed = json.loads(content)
                 proposal = NoteProposal.model_validate(parsed)
             except (json.JSONDecodeError, ValidationError) as exc:
                 last_error = exc
+                log.warning("extract: answer did not parse: %s", exc)
                 continue
+            log.info(
+                "extract: %d change(s), %d candidate(s), language=%r",
+                len(proposal.changes),
+                len(proposal.security_candidates),
+                proposal.language,
+            )
             return ExtractionResult(
                 proposal=proposal.model_dump(mode="json", exclude_none=False),
                 provider="openai",
                 model=self.model,
             )
 
+        log.error("extract: failed after retry: %s", last_error)
         raise RuntimeError(f"extraction failed after retry: {last_error}") from last_error

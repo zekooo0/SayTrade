@@ -11,12 +11,12 @@ from app.schemas.api import MeView
 router = APIRouter(tags=["me"])
 
 
-@router.get("/me", response_model=MeView)
-async def me(
-    request: Request,
-    session: AsyncSession = Depends(get_session),
-    user: User = Depends(current_user),
-):
+async def _me_view(request: Request, session: AsyncSession, user: User) -> MeView:
+    """Everything the app knows about this account.
+
+    The capital is not here: it belongs to a portfolio, because money is sized
+    per market, not per account.
+    """
     entitlements = request.app.state.entitlements
     usage = await entitlements.usage(session, user)
     return MeView(
@@ -25,3 +25,12 @@ async def me(
         usage=usage,
         entitlements=entitlements.entitlements_view(),
     )
+
+
+@router.get("/me", response_model=MeView)
+async def me(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    return await _me_view(request, session, user)

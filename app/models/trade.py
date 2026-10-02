@@ -52,6 +52,12 @@ class Trade(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
+    # The market this trade belongs to. Nullable in the schema so a backfill can
+    # never half-fail, but the app always sets it: a trade recorded while a
+    # portfolio is selected goes into that portfolio, and never mixes markets.
+    portfolio_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("portfolios.id"), nullable=True
+    )
 
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
 

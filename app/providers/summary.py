@@ -62,7 +62,7 @@ class Summarizer(Protocol):
 class OpenAISummarizer:
     """One short chat completion over the action list. No transcript, ever."""
 
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini"):
+    def __init__(self, api_key: str, model: str = "gpt-6-luna"):
         self.api_key = api_key
         self.model = model
 
@@ -97,7 +97,6 @@ class OpenAISummarizer:
                     {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
                     {"role": "user", "content": payload},
                 ],
-                temperature=0,
             )
             return response.choices[0].message.content or ""
 
@@ -116,7 +115,6 @@ class OpenAISummarizer:
                     {"role": "system", "content": OBSERVATION_SYSTEM_PROMPT},
                     {"role": "user", "content": payload},
                 ],
-                temperature=0,
             )
             return response.choices[0].message.content or ""
 

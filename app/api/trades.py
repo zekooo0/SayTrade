@@ -18,10 +18,15 @@ router = APIRouter(prefix="/trades", tags=["trades"])
 @router.get("", response_model=list[TradeSummaryView])
 async def list_trades(
     open_only: bool = False,
+    portfolio_id: UUID | None = None,
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_user),
 ):
-    return await trade_service.list_trades(session, user, open_only=open_only)
+    """The trader's trades. ``portfolio_id`` scopes the list to one market, which
+    is what the switch in the app sends."""
+    return await trade_service.list_trades(
+        session, user, open_only=open_only, portfolio_id=portfolio_id
+    )
 
 
 @router.get("/{trade_id}", response_model=TradeDetailView)

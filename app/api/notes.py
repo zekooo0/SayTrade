@@ -29,6 +29,8 @@ class TextNoteIn(BaseModel):
     text: str = Field(min_length=1, max_length=5000)
     # Recording from a trade page: the note belongs to this trade.
     trade_id: UUID | None = None
+    # Recording into a market: the trade it opens lands in this portfolio.
+    portfolio_id: UUID | None = None
 
 
 class ApproveIn(BaseModel):
@@ -71,6 +73,9 @@ async def receive_voice(
     # would be read from the query string. The field would then be dropped in
     # silence and a follow-up recorded here would lose its trade.
     trade_id: UUID | None = Form(None),
+    # The market this recording belongs to. Form for the same reason: the body
+    # is multipart, and an unmarked scalar is read from the query string.
+    portfolio_id: UUID | None = Form(None),
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_user),
 ):
@@ -91,6 +96,7 @@ async def receive_voice(
             request.app.state.storage,
             entitlements,
             trade_id=trade_id,
+            portfolio_id=portfolio_id,
         )
     except DomainError as exc:
         _raise_http(exc)
@@ -118,7 +124,11 @@ async def receive_text(
     """Type a note instead of speaking it. No allowance unit is used."""
     try:
         view = await journal_service.receive_text_note(
-            session, user, payload.text, trade_id=payload.trade_id
+            session,
+            user,
+            payload.text,
+            trade_id=payload.trade_id,
+            portfolio_id=payload.portfolio_id,
         )
     except DomainError as exc:
         _raise_http(exc)

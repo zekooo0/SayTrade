@@ -45,9 +45,15 @@ class NoteView(BaseModel):
     status: str
     source: str
     trade_id: UUID | None = None
+    # The market this note was recorded into. Null for a follow-up, which takes
+    # its market from the trade it belongs to.
+    portfolio_id: UUID | None = None
     # The symbol this note belongs to: its trade's symbol, else the symbol the
     # model read in the trader's words (an opening note has no trade yet).
     symbol: str | None = None
+    # The tickers this note's market already holds. The review screen warns when
+    # the model read one that is not here.
+    market_symbols: list[str] = Field(default_factory=list)
     # The open trades to choose from, when a note changes a position and does not
     # say which trade it belongs to. The review screen offers them; without a
     # choice the note cannot be approved.
@@ -75,6 +81,9 @@ class TradeSummaryView(BaseModel):
     id: UUID
     symbol: str
     currency: str | None = None
+    # The market this trade belongs to. Null only for a trade recorded before
+    # portfolios existed, or one recorded without a portfolio selected.
+    portfolio_id: UUID | None = None
     opened_at: datetime
     closed_at: datetime | None = None
     is_open: bool = True
@@ -92,6 +101,11 @@ class TradeSummaryView(BaseModel):
 
     note_count: int = 0
     last_note_at: datetime | None = None
+
+    # Cost of the position as a percent of the account's capital. Derived on
+    # read from shares and average price; None when the trader has not set a
+    # capital, or the position has no size yet.
+    position_size_percent: str | None = None
 
 
 class TradeDetailView(TradeSummaryView):
@@ -125,6 +139,32 @@ class MeView(BaseModel):
     plan: str = "FREE"
     usage: UsageView
     entitlements: dict[str, Any] = Field(default_factory=dict)
+
+
+class PortfolioView(BaseModel):
+    """A market: its own exchange, its own currency, its own trades."""
+
+    id: UUID
+    name: str
+    # "EGX" or "US". This is the market the trader picked; the currency follows
+    # from it, and the symbol lookup is scoped by it.
+    exchange: str | None = None
+    currency: str | None = None
+    capital: str | None = None
+    trade_count: int = 0
+    created_at: datetime
+
+
+class PortfolioIn(BaseModel):
+    """Create or change a portfolio. Absent fields are left alone; an explicit
+    null capital clears it."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=60)
+    # The market. Sending this also sets the currency (EGX -> EGP, US -> USD).
+    exchange: str | None = Field(default=None, max_length=8)
+    currency: str | None = Field(default=None, max_length=8)
+    capital: Decimal | None = Field(default=None, ge=0)
+    clear_capital: bool = False
 
 
 class EquityPoint(BaseModel):

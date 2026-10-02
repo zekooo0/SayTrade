@@ -187,6 +187,22 @@ def r_multiple(changes) -> Decimal | None:
     return (avg_exit - avg) / risk
 
 
+def position_size_percent(changes, capital: Decimal | None) -> Decimal | None:
+    """What this position costs, as a percent of the account's capital.
+
+    Cost is the shares held at their average price. None — never 0 — when the
+    capital is unset or the position has no size yet: a trade whose size is
+    unknown must not read as a zero-sized one.
+    """
+    if capital is None or capital <= 0:
+        return None
+    shares = shares_held(changes)
+    average = average_price(changes)
+    if shares <= 0 or average is None:
+        return None
+    return q4(shares * average / capital * 100)
+
+
 def warnings(changes, *, closed: bool) -> list[str]:
     """Plain-language gaps the trader can fix later."""
     out: list[str] = []

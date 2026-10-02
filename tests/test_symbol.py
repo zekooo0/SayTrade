@@ -147,7 +147,9 @@ def test_an_observation_can_be_filed_under_a_trade(client):
 
     note = record_text(client, "I noticed a head and shoulders top forming")
     body = proposal([])
-    body["symbol"] = "NVDA"
+    body["security_candidates"] = [
+        {"exchange": "US", "ticker": "NVDA", "name": "NVIDIA Corporation", "aliases": []}
+    ]
 
     result = client.post(
         f"/notes/{note['id']}/approve",
@@ -184,3 +186,28 @@ def test_a_voice_follow_up_on_a_trade_wears_that_trade_symbol(client):
     # Same defect, same field type: the duration was read from the query string
     # too, so every recording was stored as 0 ms.
     assert note["duration_ms"] == 30000
+
+
+def test_the_literal_string_null_is_not_a_ticker():
+    """gpt-4o-mini answers with the string "null" when the note names no
+    instrument. Left alone it becomes a trade whose ticker is NULL, which the
+    trader then has to find and delete."""
+    from app.schemas.proposal import NoteProposal
+
+    blank = NoteProposal.model_validate(
+        {
+            "security_candidates": [
+                {"exchange": "null", "ticker": "null", "name": " NULL ", "aliases": ["", "  "]}
+            ]
+        }
+    )
+    candidate = blank.security_candidates[0]
+    assert candidate.ticker is None
+    assert candidate.name is None
+    assert candidate.exchange is None
+    assert candidate.aliases == []
+
+    named = NoteProposal.model_validate(
+        {"security_candidates": [{"exchange": "EGX", "ticker": "ABUK", "name": "Abou Kir"}]}
+    )
+    assert named.security_candidates[0].ticker == "ABUK"

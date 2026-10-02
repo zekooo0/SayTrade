@@ -23,8 +23,8 @@ class Settings(BaseSettings):
 
     # --- OpenAI (transcription + extraction) ---
     openai_api_key: str | None = None
-    openai_transcription_model: str = "whisper-1"
-    openai_extraction_model: str = "gpt-4o-mini"
+    openai_transcription_model: str = "gpt-transcribe"
+    openai_extraction_model: str = "gpt-6-luna"
 
     # --- Cloudinary (audio storage) ---
     cloudinary_cloud_name: str | None = None
@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # --- CORS ---
     # Comma-separated origins allowed to call the API from a browser.
     cors_origins: str = "http://localhost:3000"
+
+    # How much the app says about itself. INFO prints every stage of a note and
+    # every symbol decision; DEBUG adds the raw model output. See app/log.py.
+    log_level: str = "INFO"
 
 
 @lru_cache

@@ -251,14 +251,14 @@ def test_the_review_edits_are_what_gets_applied(client):
 def test_text_note_can_open_a_trade_without_audio(client):
     set_proposal(client, proposal(
         [{"kind": "OPEN", "shares": "5", "price": "100", "stop": "95", "target": "120"}],
-        symbol="ETEL",
-        summary="Opened ETEL.",
+        symbol="NVDA",
+        summary="Opened NVDA.",
     ))
-    note = record_text(client, "opened ETEL 5 shares at 100, stop 95, target 120")
+    note = record_text(client, "opened NVDA 5 shares at 100, stop 95, target 120")
     assert note["source"] == "TEXT"
     assert note["audio_url"] is None
     assert approve(client, note["id"]).status_code == 200
-    assert trades(client)[0]["symbol"] == "ETEL"
+    assert trades(client)[0]["symbol"] == "NVDA"
 
 
 def test_a_follow_up_note_carries_the_symbol_of_its_trade(client):
@@ -270,7 +270,7 @@ def test_a_follow_up_note_carries_the_symbol_of_its_trade(client):
     set_proposal(client, proposal([{"kind": "STOP", "stop": "88"}], symbol=None))
     note = record_text(client, "I moved the stop to 88", trade_id=aaa["id"])
 
-    assert note["proposal"]["symbol"] is None  # the model said nothing
+    assert note["proposal"]["security_candidates"] == []  # the model said nothing
     assert note["symbol"] == "AAA"  # the trade said it
     assert approve(client, note["id"]).status_code == 200
     assert get_note(client, note["id"])["symbol"] == "AAA"

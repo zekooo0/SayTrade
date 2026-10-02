@@ -221,24 +221,26 @@ def test_discarding_a_voice_note_frees_the_monthly_ai_unit(client):
     assert usage["voice_notes_used"] == 0
 
 
-def test_the_browser_preflight_allows_delete(client):
-    """A cross-origin DELETE only happens if its preflight passes.
+def test_the_browser_preflight_allows_every_method_the_client_sends(client):
+    """A cross-origin write only happens if its preflight passes.
 
     The browser sends OPTIONS first. A method missing from the API's CORS policy
     answers "Disallowed CORS method", and the browser then reports a CORS
-    failure with a null status — the discard never leaves the page, and nothing
-    reaches the server to log. This pins the policy to the methods the client
-    actually sends.
+    failure with a null status — the call never leaves the page, and nothing
+    reaches the server to log. That has now happened twice: DELETE for
+    discarding a note, PATCH when portfolios arrived. So this pins every method
+    the client actually sends, not the one that broke last.
     """
-    resp = client.options(
-        "/notes/00000000-0000-0000-0000-000000000000",
-        headers={
-            "Origin": "http://localhost:3000",
-            "Access-Control-Request-Method": "DELETE",
-            "Access-Control-Request-Headers": "authorization",
-        },
-    )
-    assert resp.status_code == 200, resp.text
-    allowed = resp.headers["access-control-allow-methods"]
-    assert "DELETE" in allowed, allowed
-    assert resp.headers["access-control-allow-origin"] == "http://localhost:3000"
+    for method in ("GET", "POST", "PATCH", "DELETE"):
+        resp = client.options(
+            "/notes/00000000-0000-0000-0000-000000000000",
+            headers={
+                "Origin": "http://localhost:3000",
+                "Access-Control-Request-Method": method,
+                "Access-Control-Request-Headers": "authorization",
+            },
+        )
+        assert resp.status_code == 200, f"{method}: {resp.text}"
+        allowed = resp.headers["access-control-allow-methods"]
+        assert method in allowed, f"{method} missing from {allowed}"
+        assert resp.headers["access-control-allow-origin"] == "http://localhost:3000"

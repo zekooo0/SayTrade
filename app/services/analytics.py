@@ -31,6 +31,7 @@ from app.schemas.api import (
     d,
 )
 from app.services import notes as note_service
+from app.services import trades as trades_service
 
 ZERO = Decimal("0")
 ONE = Decimal("1")
@@ -94,8 +95,11 @@ async def overview(session: AsyncSession, user: User) -> AnalyticsView:
     # --- one pass over the trades: close each one down to its derived numbers ---
     rows: list[dict] = []
     holding_days: list[float] = []
+    capitals = await trades_service.capitals_for(session, user)
     for trade in trades:
-        summary = await note_service.trade_summary(session, trade)
+        summary = await note_service.trade_summary(
+            session, trade, capital=capitals.get(trade.portfolio_id)
+        )
         if summary.is_open:
             view.open_trades += 1
             continue

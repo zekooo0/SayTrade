@@ -58,6 +58,13 @@ class Note(Base):
         Uuid(as_uuid=True), ForeignKey("trades.id"), nullable=True
     )
 
+    # The market this note was recorded into. The trade it opens lands in the
+    # same portfolio, so markets never mix. NULL on notes recorded before
+    # portfolios existed.
+    portfolio_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("portfolios.id"), nullable=True
+    )
+
     # The trader's words. NULL for a voice note until transcription succeeds.
     text: Mapped[str | None] = mapped_column(Text, nullable=True)
     summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -77,6 +84,10 @@ class Note(Base):
 
     transcription_provider: Mapped[str | None] = mapped_column(String(30), nullable=True)
     transcription_model: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    # The language the transcriber detected. Recorded, not guessed: the summary
+    # and the extraction both care, and a wrong guess is how an Egyptian note
+    # came back with a Russian ticker.
+    transcription_language: Mapped[str | None] = mapped_column(String(8), nullable=True)
     extraction_provider: Mapped[str | None] = mapped_column(String(30), nullable=True)
     extraction_model: Mapped[str | None] = mapped_column(String(60), nullable=True)
 
