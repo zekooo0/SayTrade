@@ -114,3 +114,40 @@ def test_a_closed_trade_with_no_prediction_has_none(client):
     approve(client, note["id"])
 
     assert trade(client, opened["id"])["prediction"] is None
+
+
+def test_an_open_does_not_record_a_prediction(client):
+    """The stop of a new position is not a prediction about the future.
+
+    Rule 12 tells the extractor that a prediction belongs to a closing note, but
+    the stop of a brand new position reads almost exactly like the "failure
+    point" a prediction is about, so one can arrive on an OPEN. The applier
+    decides by the note's own changes instead of trusting the proposal: a note
+    that does not close the trade records no prediction, whatever it offered.
+    """
+    set_proposal(
+        client,
+        proposal(
+            [
+                {
+                    "kind": "OPEN",
+                    "shares": "100",
+                    "price": "10",
+                    "stop": "9",
+                    "target": "12",
+                }
+            ],
+            symbol="NVDA",
+            prediction={"reason": "I expect it to fail and reach my stop"},
+        ),
+    )
+    note = record_text(client, "I opened NVDA at 10, stop 9, target 12")
+    result = approve(client, note["id"])
+    assert result.status_code == 200, result.text
+
+    detail = trade(client, result.json()["trade_id"])
+
+    assert detail["is_open"] is True
+    assert detail["prediction"] is None
+    # The stop is still on the trade: it is a level, not a forecast.
+    assert detail["current_stop"] is not None

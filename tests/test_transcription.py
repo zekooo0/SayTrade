@@ -58,3 +58,21 @@ def test_the_browsers_webm_is_converted_to_wav():
     assert wav[:4] == b"RIFF"
     assert wav[8:12] == b"WAVE"
     assert len(wav) > 0
+
+
+def test_the_keywords_carry_the_unit_words():
+    """A price said in piasters has to come through as piasters.
+
+    The extractor converts a minor unit into the market's currency (rule 14), so
+    a misheard "إرش" turns a price into a bare number — and a bare number is
+    taken to be already in the market's currency. The result is a price a hundred
+    times too big, which is exactly what happened on a real note.
+    """
+    words = transcription_keywords(("SWDY",))
+
+    assert "إرش" in words
+    assert "قرش" in words
+    assert "جنيه" in words
+    # The trader's ticker still comes through, and nothing is duplicated.
+    assert "SWDY" in words
+    assert len(words) == len(set(words))

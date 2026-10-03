@@ -58,6 +58,7 @@ Return ONE JSON object with exactly these keys:
       "kind": "OPEN | ADD | TRIM | STOP | TARGET | CLOSE",
       "occurred_at": null,
       "shares": null,
+      "amount": "<the money he said he put in, or null>",
       "price": null,
       "stop": null,
       "target": null,
@@ -76,7 +77,7 @@ The six kinds:
 
 Rules. A broken rule is a failed extraction:
 1. Never invent a value. If the trader did not give it, leave it null. The review screen asks for it later.
-2. Never do arithmetic. For "half", "a third", "30% of my position" use fraction (0.5, 0.3333, 0.3). The backend computes the shares from the real position.
+2. Never do arithmetic. For "half", "a third", "30% of my position" use fraction (0.5, 0.3333, 0.3). The backend computes the shares from the real position. The ONE calculation you do is a currency conversion, and only as rule 14 describes it.
 3. One note can hold several changes ("I sold half and moved the stop to 9.5"). Keep them in spoken order.
 4. A note with no change is valid: use an empty changes list. Example: "I saw a reverse candle, I will wait for tomorrow."
 5. security_candidates: the companies this note is about. The trader may say a ticker, or a company name in Arabic or in English. For each company give the exchange you believe it trades on, its ticker, the company name in English, and the words the trader used for it. These are PROPOSALS: the backend checks each ticker against that market's own list of what trades there and discards the ones that are not on it, so list only companies you actually recognise, and never pad the list. Leave it empty when the note names no company.
@@ -84,10 +85,12 @@ Rules. A broken rule is a failed extraction:
 7. occurred_at only when the trader states a time ("yesterday", "this morning"): ISO 8601, using the recording date for relative words. If no recording timestamp is given, leave occurred_at null. NEVER invent a date.
 8. "I sold all", "I am out", "I closed it" with no amount means CLOSE.
 9. Never infer a pattern, a reason, a result, or an emotion. The trader's words are the record.
-10. Keep every number exactly as spoken. 129.5 stays 129.5.
+10. Keep every number at the precision it was spoken with: do not round it and do not rescale it. The unit is the one exception, and rule 14 explains it.
 11. language is the language the note is spoken in: "en" or "ar". It is not the language of your answer — you write no prose at all.
-12. prediction: ONLY when the note CLOSES a trade. The trader usually says why ("I am out, I expect it to fail and reach my failure point"). Record what he expects to happen next: the price level he expects to be reached if he names one, which way price has to move to get there, and his reason in his own words. The failure point is usually the trade's own stop: leave level null when he means the stop, and set it only when he names a different price. Leave prediction null for a note that opens or adds.
+12. prediction: ONLY when the note CLOSES a trade. The trader usually says why ("I am out, I expect it to fail and reach my failure point"). Record what he expects to happen next: the price level he expects to be reached if he names one, which way price has to move to get there, and his reason in his own words. The failure point is usually the trade's own stop: leave level null when he means the stop, and set it only when he names a different price. A note that OPENS a position, ADDS to one, or sets its stop is NOT a close, no matter how the trader describes that stop — its changes carry the stop, and its prediction MUST be null. There is nothing to predict about a trade that has not begun.
 13. resolution: ONLY when the note is about a trade that is already CLOSED. There is no position to change, so the only question is whether the prediction he made at the close came true: CORRECT if the price did what he expected, INCORRECT if it did not. Leave resolution null when the note says nothing about the outcome, and never invent one.
+14. MONEY: every price, stop, target and level is recorded in the market's own currency (the currency given above). A trader may state an amount in that currency's MINOR unit instead — a trader in Egypt says "قرش" or "إرش" where the currency is the pound, a trader in the United States says cents where it is the dollar. One hundred minor units make one major unit, so convert it and give the amount in the market's currency. Convert ONLY a number that actually carries a minor unit word; a bare number is already in the market's currency and must be left alone. When one amount names both units together, they are a single amount and belong added together. This is the only calculation you ever do.
+15. SIZING BY MONEY: instead of a share count, a trader may give the money he put in — "I opened a position with 3000 egp at a price of 10". Put that money in amount and the price in price, and leave shares NULL: the backend divides the money by the price and rounds down to a whole share. Do NOT divide it yourself and do NOT guess a share count from the money — an amount you divide is a share count nobody can check. Use amount only when he names money for size; a share count he states himself goes in shares, and a change that has neither is left with both null.
 
 Return only the JSON object. No markdown, no commentary."""
 

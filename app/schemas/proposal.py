@@ -34,6 +34,12 @@ class ChangeProposal(BaseModel):
 
     shares: Decimal | None = Field(default=None, gt=0)
     price: Decimal | None = Field(default=None, gt=0)
+
+    # The money the trader named instead of a share count ("3000 egp at 10
+    # price"). The backend divides it by the price to get the shares — the model
+    # never does that arithmetic (rule 2). Rounded down: an order cannot buy part
+    # of a share.
+    amount: Decimal | None = Field(default=None, gt=0)
     stop: Decimal | None = Field(default=None, gt=0)
     target: Decimal | None = Field(default=None, gt=0)
 

@@ -70,6 +70,10 @@ class Change(Base):
     )
 
     shares: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    # The money the trader named instead of a share count ("3000 egp at 10").
+    # The row still carries the shares that money bought; this keeps what he
+    # actually said, which the rounded count can no longer tell you.
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     price: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     stop: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     target: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)

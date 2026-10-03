@@ -76,10 +76,25 @@ def transcription_keywords(symbols: Sequence[str] = ()) -> list[str]:
     trader's own tickers are exactly what a misheard word should be matched
     against. Verified: "ميت سهم" became "مية سهم" once مية was among them.
 
+    The unit words matter as much as the number words. A price said in piasters
+    ("إرش", "قرش") has to come through as that unit, because the extractor
+    converts it to the market's currency — a misheard "إرش" turns a price into a
+    bare number and, from there, into a price a hundred times too big.
+
     Each keyword must sit on one line with no <, >, carriage return or line feed,
     or the API rejects the whole request.
     """
-    terms = ["سهم", "جنيه", "مية", "خمسين", "اربعين", "وقف الخسارة", "مستهدف"]
+    terms = [
+        "سهم",
+        "جنيه",
+        "إرش",
+        "قرش",
+        "مية",
+        "خمسين",
+        "اربعين",
+        "وقف الخسارة",
+        "مستهدف",
+    ]
     for symbol in symbols:
         term = symbol.strip().replace("\n", "").replace("\r", "")
         if term and term not in terms:

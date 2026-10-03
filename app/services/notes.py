@@ -16,7 +16,7 @@ One engine, one transaction. The rules:
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import ROUND_FLOOR, Decimal
 from uuid import UUID
 
 from sqlalchemy import func, select
@@ -60,6 +60,7 @@ def change_view(change: Change) -> ChangeView:
         kind=change.kind,
         occurred_at=change.occurred_at,
         shares=d(change.shares),
+        amount=d(change.amount),
         price=d(change.price),
         stop=d(change.stop),
         target=d(change.target),
@@ -477,11 +478,19 @@ def _missing(field: str, context: str) -> IncompleteNoteError:
     return IncompleteNoteError(f"{context} Add {field} in the review screen and approve again.")
 
 
-def _validate(kind: str, c: ChangeProposal, position: Decimal) -> None:
+def _validate(
+    kind: str, c: ChangeProposal, position: Decimal, shares: Decimal | None
+) -> None:
     """Every value the change needs must be present. Missing values name
-    themselves so the trader can fill them in the review screen."""
+    themselves so the trader can fill them in the review screen.
+
+    ``shares`` is the count the change will actually apply, which the caller may
+    have derived from an amount of money and a price. Validation asks about that
+    count, never about the proposal's raw field — otherwise a position sized by
+    money is refused for a share count it does have.
+    """
     if kind == "OPEN":
-        if c.shares is None:
+        if shares is None:
             raise _missing(
                 "the share count",
                 "This note opens a position but does not say how many shares.",
@@ -492,7 +501,7 @@ def _validate(kind: str, c: ChangeProposal, position: Decimal) -> None:
                 "This note opens a position but does not say at what price.",
             )
     elif kind == "ADD":
-        if c.shares is None:
+        if shares is None:
             raise _missing(
                 "the share count", "This note buys more but does not say how many shares."
             )
@@ -501,12 +510,12 @@ def _validate(kind: str, c: ChangeProposal, position: Decimal) -> None:
                 "the price", "This note buys more but does not say at what price."
             )
     elif kind == "TRIM":
-        if c.shares is None and c.fraction is None:
+        if shares is None and c.fraction is None:
             raise _missing(
                 "the share count or a fraction",
                 "This note sells part of the position but does not say how much.",
             )
-        if c.shares is None and position <= 0:
+        if shares is None and position <= 0:
             raise IncompleteNoteError(
                 "This note sells a part of the position, but there is no open position to take a part of."
             )
@@ -523,8 +532,45 @@ def _validate(kind: str, c: ChangeProposal, position: Decimal) -> None:
             )
 
 
+def _effective_shares(c: ChangeProposal) -> Decimal | None:
+    """The share count this change will apply.
+
+    What he said, or — when he named money instead of a count — what that money
+    buys at the price he gave. Validation and the applier both ask this question,
+    so they can never disagree about whether a change has a count.
+    """
+    if c.shares is not None:
+        return c.shares
+    if c.amount is not None and c.price is not None:
+        return _shares_from_amount(c.amount, c.price)
+    return None
+
+
 def _shares_from_fraction(position: Decimal, fraction: Decimal) -> Decimal:
     return position * fraction
+
+
+def _shares_from_amount(amount: Decimal, price: Decimal) -> Decimal:
+    """How many shares the money bought, rounded down to a whole share.
+
+    "I opened a position with 3000 egp at a price of 10" is 300 shares. It is
+    the backend that divides, not the model: rule 2 forbids the extractor any
+    arithmetic, so the amount and the price arrive as he said them and the
+    division happens here, on the real numbers.
+
+    Rounded DOWN, never up: an order cannot buy part of a share, and rounding up
+    would spend more money than the trader said he had.
+    """
+    if price <= 0:
+        raise IncompleteNoteError(
+            "The price is zero, so the amount cannot be turned into shares."
+        )
+    shares = (amount / price).to_integral_value(rounding=ROUND_FLOOR)
+    if shares <= 0:
+        raise IncompleteNoteError(
+            f"{amount} does not buy a single share at a price of {price}."
+        )
+    return shares
 
 
 async def _resolve_trade(
@@ -616,7 +662,7 @@ async def apply_note(
             raise _missing(
                 "the symbol", "This note opens a position but does not name the instrument."
             )
-        _validate("OPEN", open_change, Decimal("0"))
+        _validate("OPEN", open_change, Decimal("0"), _effective_shares(open_change))
         existing = await session.scalar(
             select(Trade)
             .where(
@@ -676,9 +722,16 @@ async def apply_note(
 
     rows: list[Change] = []
     for c in changes:
-        _validate(c.kind, c, position)
         occurred_at = c.occurred_at or note.created_at
-        shares = c.shares
+
+        # He may size the position by the money he spent instead of by a share
+        # count ("3000 egp at a price of 10"). The model records the amount and
+        # the price and never divides them (rule 2); the division happens here,
+        # on the real numbers, rounded DOWN to a whole share — an order cannot
+        # buy part of one, and rounding up would spend money he does not have.
+        shares = _effective_shares(c)
+
+        _validate(c.kind, c, position, shares)
 
         if c.kind == "OPEN":
             position = shares or Decimal("0")
@@ -709,6 +762,7 @@ async def apply_note(
                 kind=c.kind,
                 occurred_at=occurred_at,
                 shares=shares,
+                amount=c.amount,
                 price=c.price,
                 stop=c.stop,
                 target=c.target,
@@ -738,10 +792,33 @@ async def apply_note(
     # prediction is made when a trade closes; a resolution is read from a later
     # note on that same, already-closed, trade. Neither touches the other, and
     # neither touches the trade result.
+    #
+    # The model is told this (rules 12 and 13), but a proposal is only a
+    # proposal — and the stop of a brand new position reads a lot like the
+    # "failure point" a prediction is about, so an OPEN can come back carrying
+    # one. What decides is the note's own applied changes, not the model: a
+    # prediction is recorded only by the note that actually closes the trade, and
+    # a resolution only on a trade that is already closed.
+    closed_here = any(row.kind == "CLOSE" for row in rows)
     if proposal.prediction is not None:
-        await _record_prediction(session, user, note, trade, proposal.prediction)
+        if closed_here:
+            await _record_prediction(session, user, note, trade, proposal.prediction)
+        else:
+            log.info(
+                "note %s did not close the trade; dropping the prediction the "
+                "extractor offered (kinds=%s)",
+                note.id,
+                [row.kind for row in rows],
+            )
     if proposal.resolution is not None:
-        await _resolve_prediction(session, trade, note, proposal.resolution)
+        if trade.closed_at is not None:
+            await _resolve_prediction(session, trade, note, proposal.resolution)
+        else:
+            log.info(
+                "trade %s is still open; dropping the resolution the extractor "
+                "offered",
+                trade.id,
+            )
 
     applied = await changes_for_trade(session, trade.id)
     return ApproveResultView(

@@ -33,6 +33,7 @@ class ChangeView(BaseModel):
     kind: str
     occurred_at: datetime
     shares: str | None = None
+    amount: str | None = None
     price: str | None = None
     stop: str | None = None
     target: str | None = None
