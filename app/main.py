@@ -53,10 +53,16 @@ app.add_middleware(
 
 # --- runtime wiring (tests override these app.state slots) ---
 app.state.settings = settings
+# One fetcher per configured issuer. With a single issuer this is the only one;
+# with two (a domain move) a token is checked against the keys of the instance
+# that actually minted it.
 app.state.jwks = (
-    HttpJwksFetcher(settings.clerk_frontend_api)
-    if settings.clerk_frontend_api
-    else None
+    HttpJwksFetcher(settings.clerk_issuers[0]) if settings.clerk_issuers else None
+)
+app.state.jwks_by_issuer = (
+    {issuer: HttpJwksFetcher(issuer) for issuer in settings.clerk_issuers}
+    if len(settings.clerk_issuers) > 1
+    else {}
 )
 app.state.storage = CloudinaryStorage(
     cloud_name=settings.cloudinary_cloud_name or "",

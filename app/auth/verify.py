@@ -68,6 +68,25 @@ def verify_token(token: str, issuer: str, jwks: dict) -> dict:
     return claims
 
 
+def unverified_issuer(token: str) -> str | None:
+    """The token's `iss` claim, read WITHOUT checking the signature.
+
+    This is a LOOKUP KEY and nothing else: it selects which instance's key set
+    the token gets checked against. It is never trusted as a fact — a forged
+    `iss` merely points at a key set that the signature then fails against.
+
+    Needed because a domain move leaves two Clerk issuers alive at once: a token
+    minted on the old host and one minted on the new host are both legitimate,
+    and only the token itself says which is which.
+    """
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        return None
+    issuer = claims.get("iss")
+    return issuer if isinstance(issuer, str) else None
+
+
 async def verify_clerk_token(token: str, fetcher, issuer: str) -> dict:
     try:
         jwks = await fetcher.get()

@@ -21,6 +21,18 @@ class Settings(BaseSettings):
     # e.g. https://your-app.clerk.accounts.dev — also the JWT issuer.
     clerk_frontend_api: str | None = None
 
+    @property
+    def clerk_issuers(self) -> tuple[str, ...]:
+        """Every Clerk issuer a session token may carry.
+
+        One instance normally means one issuer. A domain move means two, for as
+        long as the old host is still in use: tokens minted there stay valid and
+        the API accepts both. Comma-separated in the environment, because that is
+        how the platform's env UI takes a list.
+        """
+        raw = self.clerk_frontend_api or ""
+        return tuple(i.strip().rstrip("/") for i in raw.split(",") if i.strip())
+
     # --- OpenAI (transcription + extraction) ---
     openai_api_key: str | None = None
     openai_transcription_model: str = "gpt-transcribe"
