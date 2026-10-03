@@ -261,6 +261,11 @@ class AnalyticsView(BaseModel):
     breakeven: int = 0
     win_rate: float | None = None
 
+    # How often the trader's predictions about what happens next were right.
+    # Beside the win rate, never merged with it: a losing trade can carry a
+    # correct prediction, and that is the point of measuring it separately.
+    prediction_accuracy: PredictionAccuracyView | None = None
+
     # --- money ---
     total_pnl: str | None = None
     average_pnl: str | None = None

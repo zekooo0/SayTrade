@@ -31,6 +31,7 @@ from app.schemas.api import (
     d,
 )
 from app.services import notes as note_service
+from app.services import predictions as prediction_service
 from app.services import trades as trades_service
 
 ZERO = Decimal("0")
@@ -220,6 +221,11 @@ async def overview(session: AsyncSession, user: User) -> AnalyticsView:
 
     # --- the journal habit ---
     await _habit(session, user, view)
+
+    # --- the other dimension ---
+    # The trade result above is what the position did. This is what the trader
+    # expected it to do. Separate numbers, on purpose.
+    view.prediction_accuracy = await prediction_service.accuracy(session, user)
     return view
 
 
