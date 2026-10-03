@@ -10,9 +10,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain import position as pos
 from app.domain.errors import TradeNotFoundError
-from app.models import Portfolio, Trade, User
-from app.schemas.api import TradeDetailView, TradeSummaryView
+from app.models import Portfolio, Prediction, Trade, User
+from app.schemas.api import TradeDetailView, TradeSummaryView, PredictionView, d
 from app.services import notes as note_service
+
+
+async def prediction_view(
+    session: AsyncSession, trade_id: UUID
+) -> PredictionView | None:
+    """What the trader expected after closing this trade, and whether it happened.
+
+    Its own read, not part of the summary: a prediction exists only for a closed
+    trade, and it is not a number derived from the changes like the rest.
+    """
+    prediction = await session.scalar(
+        select(Prediction).where(Prediction.trade_id == trade_id)
+    )
+    if prediction is None:
+        return None
+    return PredictionView(
+        level=d(prediction.level),
+        direction=prediction.direction,
+        reason=prediction.reason,
+        result=prediction.result,
+        resolved_at=prediction.resolved_at,
+    )
 
 
 async def capitals_for(session: AsyncSession, user: User) -> dict:
@@ -70,4 +92,5 @@ async def get_trade(
         **summary.model_dump(),
         notes=timeline,
         warnings=pos.warnings(changes, closed=trade.closed_at is not None),
+        prediction=await prediction_view(session, trade.id),
     )

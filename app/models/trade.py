@@ -6,7 +6,9 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     String,
+    UniqueConstraint,
     Uuid,
     func,
     text,
@@ -33,6 +35,9 @@ class Trade(Base):
             name="ck_trades_closed_after_open",
         ),
         Index("ix_trades_user_opened_at", "user_id", text("opened_at DESC")),
+        # The trader's own readable handle: #1, #2, #3. Unique per trader, never
+        # global — a global sequence would make his first trade #8,412.
+        UniqueConstraint("user_id", "number", name="uq_trades_user_number"),
         # A second open trade in the same symbol is a mistake, not a plan.
         Index(
             "ux_trades_one_open_per_symbol",
@@ -60,6 +65,11 @@ class Trade(Base):
     )
 
     symbol: Mapped[str] = mapped_column(String(20), nullable=False)
+
+    # The trader's readable handle for this trade: #1, #2, #3. Assigned when the
+    # trade opens, from his own sequence, and never reused. Display only — a note
+    # finds its trade by trade_id, never by reading this out of speech.
+    number: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # "USD", "EGP", ... Empty when the trader never said it. Display only:
     # all money math stays per trade, so no conversion is ever needed.

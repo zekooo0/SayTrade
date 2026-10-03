@@ -188,7 +188,10 @@ def test_follow_up_from_the_trade_page_gets_context(client):
     record_text(client, "moved the sl to 9.5", trade_id=opened["id"])
 
     call = extractor_calls()[-1]
-    assert call["active_trade"] == (opened["id"], "NVDA")
+    context = call["active_trade"]
+    assert context.id == opened["id"]
+    assert context.symbol == "NVDA"
+    assert context.closed is False
     assert call["recorded_at"] is not None
 
 

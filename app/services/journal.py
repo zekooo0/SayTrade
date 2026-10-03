@@ -25,8 +25,12 @@ from app.domain.errors import (
     TradeNotFoundError,
     WrongNoteStateError,
 )
-from app.models import Note, Portfolio, Trade, User
-from app.providers.extraction import Extractor, MarketContext
+from app.models import Note, Portfolio, Prediction, Trade, User
+from app.providers.extraction import (
+    Extractor,
+    MarketContext,
+    TradeContext,
+)
 from app.providers.storage import AudioStorage
 from app.providers.transcription import Transcriber, transcription_keywords
 from app.schemas.api import NoteView
@@ -188,7 +192,7 @@ async def receive_text_note(
 
 async def _extraction_context(
     session: AsyncSession, note: Note
-) -> tuple[str, str] | None:
+) -> TradeContext | None:
     """The trade the note was recorded against, as (id, symbol) context.
 
     The extractor uses the id verbatim, so it never invents one.
@@ -200,7 +204,31 @@ async def _extraction_context(
     )
     if trade is None:
         return None
-    return str(trade.id), trade.symbol
+    return TradeContext(
+        id=str(trade.id),
+        symbol=trade.symbol,
+        closed=trade.closed_at is not None,
+        pending_prediction=await _pending_prediction(session, trade),
+    )
+
+
+async def _pending_prediction(session: AsyncSession, trade: Trade) -> str | None:
+    """A one-line description of the trade's unresolved prediction, if it has one.
+
+    Handed to the extractor so it can recognise a later note on this trade as the
+    resolution of that prediction, rather than a note about nothing.
+    """
+    prediction = await session.scalar(
+        select(Prediction).where(
+            Prediction.trade_id == trade.id, Prediction.result == "PENDING"
+        )
+    )
+    if prediction is None:
+        return None
+    if prediction.level is None:
+        return "the trade's failure point"
+    direction = f", {prediction.direction.lower()}" if prediction.direction else ""
+    return f"price {prediction.level}{direction}"
 
 
 async def _market_context(session: AsyncSession, note: Note) -> MarketContext | None:

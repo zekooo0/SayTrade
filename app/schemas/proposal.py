@@ -86,6 +86,49 @@ class SecurityCandidate(BaseModel):
         ]
 
 
+class PredictionProposal(BaseModel):
+    """What the trader expects to happen after closing a trade.
+
+    Proposed when the note CLOSES a trade. ``level`` is usually absent: the
+    trade's own stop is the failure point the trader is talking about, and it is
+    filled in from the trade. He names one only when it differs from the stop.
+
+    ``direction`` is which way price has to move to reach that level — "BELOW"
+    for a long that fails. Stored rather than inferred, so judging it later never
+    depends on arithmetic done at read time.
+    """
+
+    level: Decimal | None = None
+    direction: str | None = None
+    reason: str | None = None
+
+    @field_validator("direction", mode="before")
+    @classmethod
+    def _a_known_direction_only(cls, value):
+        if isinstance(value, str) and value.strip().upper() in {"BELOW", "ABOVE"}:
+            return value.strip().upper()
+        return None
+
+
+class ResolutionProposal(BaseModel):
+    """Whether the predicted move happened, read from a later note.
+
+    Only ever proposed for a note on a CLOSED trade that already has a pending
+    prediction. The trade is closed, so the note cannot be about a position, and
+    the only open question is whether the prediction came true.
+    """
+
+    outcome: str | None = None
+    note: str | None = None
+
+    @field_validator("outcome", mode="before")
+    @classmethod
+    def _a_known_outcome_only(cls, value):
+        if isinstance(value, str) and value.strip().upper() in {"CORRECT", "INCORRECT"}:
+            return value.strip().upper()
+        return None
+
+
 class NoteProposal(BaseModel):
     """What the AI read in one note.
 
@@ -101,4 +144,9 @@ class NoteProposal(BaseModel):
 
     language: str | None = None
     security_candidates: list[SecurityCandidate] = Field(default_factory=list)
+    # Set only when the note CLOSES a trade: what the trader expects next.
+    prediction: PredictionProposal | None = None
+    # Set only when the note is a follow-up on an already-closed trade that has a
+    # pending prediction: whether the predicted move happened.
+    resolution: ResolutionProposal | None = None
     changes: list[ChangeProposal] = Field(default_factory=list)

@@ -144,6 +144,8 @@ def proposal(
     symbol: str | None = None,
     summary: str = "a note",
     language: str = "en",
+    prediction: dict | None = None,
+    resolution: dict | None = None,
 ) -> dict:
     """A proposal body.
 
@@ -151,6 +153,10 @@ def proposal(
     returns now: the model proposes companies and the symbols table decides
     which of them trade in the note's market. Tests that pass a ticker here are
     describing what the model thought it heard.
+
+    ``prediction`` is what the trader expects after closing; ``resolution`` is a
+    later note saying whether it happened. Both are absent unless a test is
+    about them.
 
     ``summary`` is accepted and ignored: a summary is written by the app from
     the changes, never read out of the trader's words. It stays in the signature
@@ -161,11 +167,16 @@ def proposal(
         if symbol
         else []
     )
-    return {
+    body: dict = {
         "language": language,
         "security_candidates": candidates,
         "changes": changes,
     }
+    if prediction is not None:
+        body["prediction"] = prediction
+    if resolution is not None:
+        body["resolution"] = resolution
+    return body
 
 
 def open_proposal(

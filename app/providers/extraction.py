@@ -44,6 +44,15 @@ Return ONE JSON object with exactly these keys:
       "aliases": ["<the words the trader used for it>"]
     }
   ],
+  "prediction": {
+    "level": "<the price he expects to be reached, or null>",
+    "direction": "BELOW | ABOVE | null",
+    "reason": "<why he closed, in his own words, or null>"
+  },
+  "resolution": {
+    "outcome": "CORRECT | INCORRECT | null",
+    "note": "<what he saw, in his own words, or null>"
+  },
   "changes": [
     {
       "kind": "OPEN | ADD | TRIM | STOP | TARGET | CLOSE",
@@ -77,6 +86,8 @@ Rules. A broken rule is a failed extraction:
 9. Never infer a pattern, a reason, a result, or an emotion. The trader's words are the record.
 10. Keep every number exactly as spoken. 129.5 stays 129.5.
 11. language is the language the note is spoken in: "en" or "ar". It is not the language of your answer — you write no prose at all.
+12. prediction: ONLY when the note CLOSES a trade. The trader usually says why ("I am out, I expect it to fail and reach my failure point"). Record what he expects to happen next: the price level he expects to be reached if he names one, which way price has to move to get there, and his reason in his own words. The failure point is usually the trade's own stop: leave level null when he means the stop, and set it only when he names a different price. Leave prediction null for a note that opens or adds.
+13. resolution: ONLY when the note is about a trade that is already CLOSED. There is no position to change, so the only question is whether the prediction he made at the close came true: CORRECT if the price did what he expected, INCORRECT if it did not. Leave resolution null when the note says nothing about the outcome, and never invent one.
 
 Return only the JSON object. No markdown, no commentary."""
 
@@ -108,12 +119,29 @@ class MarketContext:
     exchange: str | None = None
 
 
+@dataclass(frozen=True)
+class TradeContext:
+    """The trade a note was recorded against, and what is already known of it.
+
+    A note on a CLOSED trade cannot be about a position — the applier refuses
+    that change — so the only thing it can be is a resolution of the prediction
+    made at the close. Telling the model the trade is closed, and what that
+    prediction was, is what makes that reading possible.
+    """
+
+    id: str
+    symbol: str
+    closed: bool = False
+    # "price 95, below" while the prediction is still pending.
+    pending_prediction: str | None = None
+
+
 class Extractor(Protocol):
     async def extract(
         self,
         transcript: str,
         recorded_at: datetime | None = None,
-        active_trade: tuple[str, str] | None = None,
+        active_trade: TradeContext | None = None,
         market: MarketContext | None = None,
     ) -> ExtractionResult: ...
 
@@ -140,7 +168,7 @@ class OpenAIExtractor:
         self,
         transcript: str,
         recorded_at: datetime | None = None,
-        active_trade: tuple[str, str] | None = None,
+        active_trade: TradeContext | None = None,
         market: MarketContext | None = None,
     ) -> ExtractionResult:
         client = self._client()
@@ -152,11 +180,23 @@ class OpenAIExtractor:
                 " Use it for any time the trader did not state."
             )
         if active_trade is not None:
-            trade_id, symbol = active_trade
+            state = "CLOSED" if active_trade.closed else "open"
             context += (
-                f"\n\nThe trader is recording this note from their open {symbol} "
-                f"trade (id {trade_id}). The note is about that trade."
+                f"\n\nThe trader is recording this note from their {state} "
+                f"{active_trade.symbol} trade (id {active_trade.id}). The note is "
+                "about that trade."
             )
+            if active_trade.closed:
+                context += (
+                    " That trade is CLOSED, so this note cannot change a position:"
+                    " all it can report is whether the prediction made when it was"
+                    " closed came true."
+                )
+            if active_trade.pending_prediction:
+                context += (
+                    " A prediction on it is still pending:"
+                    f" {active_trade.pending_prediction}."
+                )
 
         if market is not None:
             held = ", ".join(market.symbols) if market.symbols else "nothing yet"

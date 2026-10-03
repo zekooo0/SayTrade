@@ -33,7 +33,7 @@ from app.domain.errors import (
     TradeNotFoundError,
     WrongNoteStateError,
 )
-from app.models import Change, Note, Portfolio, Trade, User
+from app.models import Change, Note, Portfolio, Prediction, Trade, User
 from app.log import get_logger
 from app.schemas.api import ApproveResultView, ChangeView, NoteView, TradeSummaryView, d
 from app.schemas.proposal import ChangeProposal, NoteProposal
@@ -154,6 +154,110 @@ async def read_symbols(session: AsyncSession, note: Note) -> list[str]:
     )
     found = await symbols_service.resolve_candidates(session, exchange, candidates)
     return [symbol.ticker for symbol in found]
+
+
+async def _record_prediction(
+    session: AsyncSession,
+    user: User,
+    note: Note,
+    trade: Trade,
+    proposed,
+) -> Prediction | None:
+    """One row per closed trade: what the trader expected to happen next.
+
+    Only for a trade this note actually closed. The level defaults to the trade's
+    stop, which is the failure point the trader is describing — he names one only
+    when it differs. A trade with no stop and no named level has nothing to judge,
+    so it gets no prediction.
+    """
+    if trade.closed_at is None:
+        return None
+    existing = await session.scalar(
+        select(Prediction).where(Prediction.trade_id == trade.id)
+    )
+    if existing is not None:
+        return existing
+
+    changes = await changes_for_trade(session, trade.id)
+    level = proposed.level or pos.current_stop(changes) or pos.initial_stop(changes)
+    if level is None:
+        log.info("note %s: no failure point to predict against, no prediction", note.id)
+        return None
+
+    direction = proposed.direction
+    if direction is None:
+        entry = pos.average_price(changes)
+        if entry is not None:
+            direction = "BELOW" if Decimal(str(level)) < entry else "ABOVE"
+
+    prediction = Prediction(
+        user_id=user.id,
+        trade_id=trade.id,
+        note_id=note.id,
+        level=level,
+        direction=direction,
+        reason=proposed.reason,
+        result="PENDING",
+    )
+    session.add(prediction)
+    await session.flush()
+    log.info(
+        "note %s: prediction on trade %s | level=%s %s | reason=%r",
+        note.id,
+        trade.id,
+        level,
+        direction,
+        proposed.reason,
+    )
+    return prediction
+
+
+async def _resolve_prediction(
+    session: AsyncSession, trade: Trade, note: Note, proposed
+) -> None:
+    """A later note says whether the predicted move happened.
+
+    The trade is closed and the note carries its id, so there is nothing to
+    identify: the only pending prediction on this trade is the one being judged.
+    """
+    if proposed.outcome is None or trade.closed_at is None:
+        return
+    prediction = await session.scalar(
+        select(Prediction).where(
+            Prediction.trade_id == trade.id, Prediction.result == "PENDING"
+        )
+    )
+    if prediction is None:
+        log.info(
+            "note %s: a resolution was read, but trade %s has nothing pending",
+            note.id,
+            trade.id,
+        )
+        return
+    prediction.result = proposed.outcome
+    prediction.resolved_at = datetime.now(timezone.utc)
+    prediction.resolved_by_note_id = note.id
+    await session.flush()
+    log.info(
+        "note %s: prediction on trade %s resolved %s (%r)",
+        note.id,
+        trade.id,
+        proposed.outcome,
+        proposed.note,
+    )
+
+
+async def next_trade_number(session: AsyncSession, user_id: UUID) -> int:
+    """The trader's next readable trade number: #1, #2, #3.
+
+    Read inside the transaction that creates the trade. A race would collide on
+    the (user_id, number) unique constraint, which is the guard — and a trader
+    only ever races with himself.
+    """
+    highest = await session.scalar(
+        select(func.max(Trade.number)).where(Trade.user_id == user_id)
+    )
+    return (highest or 0) + 1
 
 
 def _same_market(query, note: Note):
@@ -342,6 +446,7 @@ async def trade_summary(
         holding_days = (trade.closed_at - trade.opened_at).total_seconds() / 86400
     return TradeSummaryView(
         id=trade.id,
+        number=trade.number,
         symbol=trade.symbol,
         currency=trade.currency,
         portfolio_id=trade.portfolio_id,
@@ -532,6 +637,7 @@ async def apply_note(
         trade = Trade(
             user_id=user.id,
             symbol=symbol,
+            number=await next_trade_number(session, user.id),
             # The market the note was recorded into. This is what keeps markets
             # from mixing: the trade lands in the same portfolio as its note.
             portfolio_id=note.portfolio_id,
@@ -627,6 +733,15 @@ async def apply_note(
     note.status = STATUS_APPROVED
     note.approved_at = now
     await session.flush()
+
+    # A trade has two dimensions, and they are recorded at different moments. A
+    # prediction is made when a trade closes; a resolution is read from a later
+    # note on that same, already-closed, trade. Neither touches the other, and
+    # neither touches the trade result.
+    if proposal.prediction is not None:
+        await _record_prediction(session, user, note, trade, proposal.prediction)
+    if proposal.resolution is not None:
+        await _resolve_prediction(session, trade, note, proposal.resolution)
 
     applied = await changes_for_trade(session, trade.id)
     return ApproveResultView(

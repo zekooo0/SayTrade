@@ -75,10 +75,43 @@ class NoteView(BaseModel):
     updated_at: datetime
 
 
+class PredictionAccuracyView(BaseModel):
+    """How often the trader's predictions about what happens next were right.
+
+    PENDING predictions are counted, so the page can say how many are waiting,
+    but excluded from the percentage: an unjudged prediction is not evidence
+    either way.
+    """
+
+    accuracy: float | None = None
+    correct: int = 0
+    incorrect: int = 0
+    pending: int = 0
+    judged: int = 0
+    # Under five judged predictions the number says nothing.
+    thin: bool = True
+
+
+class PredictionView(BaseModel):
+    """What the trader expected after closing, and whether it happened.
+
+    Deliberately separate from the trade's own result. A losing trade can carry a
+    correct prediction, and that combination is the whole reason this is measured.
+    """
+
+    level: str | None = None
+    direction: str | None = None
+    reason: str | None = None
+    result: str = "PENDING"
+    resolved_at: datetime | None = None
+
+
 class TradeSummaryView(BaseModel):
     """A trade with every number derived from its changes."""
 
     id: UUID
+    # The trader's readable handle: "#12". Display only — a note carries the id.
+    number: int | None = None
     symbol: str
     currency: str | None = None
     # The market this trade belongs to. Null only for a trade recorded before
@@ -111,6 +144,9 @@ class TradeSummaryView(BaseModel):
 class TradeDetailView(TradeSummaryView):
     notes: list[NoteView] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # What the trader expected after closing, and whether it happened. Null for
+    # a trade that is still open, or one closed without an expectation.
+    prediction: PredictionView | None = None
 
 
 class ApproveResultView(BaseModel):
