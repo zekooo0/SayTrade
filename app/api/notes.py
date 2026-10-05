@@ -1,4 +1,4 @@
-"""Note endpoints: record (voice or text), review, retry, approve.
+"""Note endpoints: record (voice, text or a screenshot), review, retry, approve.
 
 The note row is the pipeline job. Recording returns immediately; transcription
 and extraction run in the background and write their results onto the row.
@@ -93,6 +93,73 @@ async def receive_voice(
             data,
             mime_type,
             duration_ms,
+            request.app.state.storage,
+            entitlements,
+            trade_id=trade_id,
+            portfolio_id=portfolio_id,
+        )
+    except DomainError as exc:
+        _raise_http(exc)
+
+    background.add_task(
+        process_note,
+        request.app.state.session_factory,
+        view.id,
+        request.app.state.storage,
+        request.app.state.transcriber,
+        request.app.state.extractor,
+        request.app.state.summarizer,
+    )
+    return view
+
+
+async def _read_image(request: Request, file: UploadFile) -> tuple[bytes, str]:
+    settings = request.app.state.settings
+    data = await file.read()
+    mime_type = (file.content_type or "").split(";")[0].strip().lower()
+    if mime_type not in settings.allowed_image_mime_types:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported image type {mime_type or 'unknown'}. Allowed: {', '.join(settings.allowed_image_mime_types)}",
+        )
+    if not data:
+        raise HTTPException(status_code=422, detail="The image is empty.")
+    if len(data) > settings.max_image_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"The image is too large (limit {settings.max_image_bytes // (1024 * 1024)} MB).",
+        )
+    return data, mime_type
+
+
+@router.post("/image", status_code=201, response_model=NoteView)
+async def receive_image(
+    request: Request,
+    background: BackgroundTasks,
+    file: UploadFile = File(...),
+    # Form, not a plain param: the body is multipart, and an unmarked scalar
+    # would be read from the query string, so a follow-up recorded here would
+    # lose its trade in silence.
+    trade_id: UUID | None = Form(None),
+    portfolio_id: UUID | None = Form(None),
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Record a note from a screenshot of a broker screen.
+
+    Costs one unit of the AI allowance, exactly as a voice note does: the model
+    reads the picture instead of a transcript. The client shrinks the picture
+    before it sends it, and the server caps what it accepts.
+    """
+    data, mime_type = await _read_image(request, file)
+
+    entitlements: Entitlements = request.app.state.entitlements
+    try:
+        view = await journal_service.receive_image_note(
+            session,
+            user,
+            data,
+            mime_type,
             request.app.state.storage,
             entitlements,
             trade_id=trade_id,

@@ -21,7 +21,7 @@ from app.db import Base
 # Pipeline states. The note row is both the journal entry and the pipeline job:
 # one row per thing the trader said.
 NOTE_STATUSES = ("RECEIVED", "TRANSCRIBED", "EXTRACTED", "APPROVED", "FAILED")
-NOTE_SOURCES = ("VOICE", "TEXT")
+NOTE_SOURCES = ("VOICE", "TEXT", "IMAGE")
 
 
 class Note(Base):
@@ -71,8 +71,12 @@ class Note(Base):
 
     source: Mapped[str] = mapped_column(String(10), nullable=False)
 
-    # Audio: a stable storage key, never a URL. Empty for text notes.
+    # Media. Each kind keeps its own storage key, and a key is never a URL: the
+    # URL is derived when it is needed. `mime_type` and `byte_size` describe
+    # whichever key is set.
     audio_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # The screenshot the note was read from, when it came from an image.
+    image_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     mime_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     byte_size: Mapped[int | None] = mapped_column(Integer, nullable=True)

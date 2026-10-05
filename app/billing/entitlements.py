@@ -112,9 +112,15 @@ class Entitlements:
             or 0
         )
 
-    async def voice_notes_used(
+    async def ai_notes_used(
         self, session: AsyncSession, user_id: UUID, now: datetime
     ) -> int:
+        """Notes that spent an AI call this month.
+
+        A voice note is transcribed and an image note is read, and both spend, so
+        both count against the same guard. A typed note costs nothing and is not
+        counted here.
+        """
         start, end = month_period(now)
         return (
             await session.scalar(
@@ -122,7 +128,7 @@ class Entitlements:
                 .select_from(Note)
                 .where(
                     Note.user_id == user_id,
-                    Note.source == "VOICE",
+                    Note.source.in_(("VOICE", "IMAGE")),
                     Note.created_at >= start,
                     Note.created_at < end,
                 )
@@ -135,16 +141,16 @@ class Entitlements:
     async def reserve_voice(
         self, session: AsyncSession, user: User, now: datetime | None = None
     ) -> None:
-        """402 when this month's voice-note guard is spent. Runs before any AI spend."""
+        """402 when this month's AI-note guard is spent. Runs before any AI spend."""
         now = now or datetime.now(timezone.utc)
         limit = self.limits_for(self.plan_for(user)).voice_notes_per_month
         if limit is None:
             return
-        used = await self.voice_notes_used(session, user.id, now)
+        used = await self.ai_notes_used(session, user.id, now)
         if used >= limit:
             _, end = month_period(now)
             raise AllowanceExhaustedError(
-                f"You have used {used} of {limit} AI voice notes this month. "
+                f"You have used {used} of {limit} AI notes this month. "
                 f"The count resets on {end.date().isoformat()}. "
                 "Typed notes still work and are always free."
             )
@@ -178,7 +184,7 @@ class Entitlements:
             plan=plan,
             active_trades_used=await self.active_trades_used(session, user.id),
             active_trades_limit=limits.active_trades,
-            voice_notes_used=await self.voice_notes_used(session, user.id, now),
+            voice_notes_used=await self.ai_notes_used(session, user.id, now),
             voice_notes_limit=limits.voice_notes_per_month,
             period_start=start,
             period_end=end,

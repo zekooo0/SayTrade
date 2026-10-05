@@ -59,6 +59,26 @@ class Settings(BaseSettings):
     # payment link, or to mailto:you@example.com, when you have one.
     upgrade_url: str = ""
 
+    # --- Image intake limits ---
+    # A screenshot of a broker screen. 8 MB covers a phone screenshot at full
+    # size; the app sends a copy capped to 1280px on its long edge, so a real
+    # upload lands near 50 kB. That cap is what keeps the model's token cost
+    # flat: tokens follow the pixel dimensions, not the file size.
+    max_image_bytes: int = 8 * 1024 * 1024
+    allowed_image_mime_types: tuple[str, ...] = ("image/jpeg", "image/png", "image/webp")
+
+    # --- Sentry ---
+    # The DSN is not a secret in the way a password is — it is the address events
+    # are posted to — but it stays in .env, which is gitignored, like every other
+    # value here. Empty means "do not report", which is what the test suite sets.
+    sentry_dsn: str = ""
+    # Which deployment an event came from. Sentry's default is "production",
+    # which would be a lie for a developer's laptop, so it is stated instead.
+    sentry_environment: str = "development"
+    # Verbose SDK logging, off unless turned on. The same switch exists on the
+    # web side, and it is what makes a verification possible without a dashboard.
+    sentry_debug: bool = False
+
     # --- Audio intake limits ---
     max_audio_bytes: int = 25 * 1024 * 1024  # 25 MB recording cap
     max_duration_ms: int = 3_600_000  # 1 hour

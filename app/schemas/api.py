@@ -64,6 +64,8 @@ class NoteView(BaseModel):
     proposal: dict[str, Any] | None = None
     changes: list[ChangeView] = Field(default_factory=list)
     audio_url: str | None = None
+    # The screenshot the note was read from, when it came from an image.
+    image_url: str | None = None
     duration_ms: int | None = None
     transcription_provider: str | None = None
     transcription_model: str | None = None

@@ -25,6 +25,10 @@ os.environ.setdefault(
 os.environ.setdefault("CLERK_FRONTEND_API", "https://test.clerk.accounts.dev")
 # Exhaust the monthly voice guard quickly in tests; keep the real trade limit.
 os.environ.setdefault("FREE_VOICE_NOTES_PER_MONTH", "2")
+# The suite must never post to Sentry: a test run is not a production incident.
+# Set outright rather than with setdefault — an empty DSN is the switch, and a
+# value inherited from the shell must not be able to turn reporting back on.
+os.environ["SENTRY_DSN"] = ""
 
 import jwt  # noqa: E402
 import pytest  # noqa: E402
@@ -209,7 +213,13 @@ class FakeExtractor:
         self.calls: list[dict] = []
 
     async def extract(
-        self, transcript: str, recorded_at=None, active_trade=None, market=None
+        self,
+        transcript: str,
+        recorded_at=None,
+        active_trade=None,
+        market=None,
+        image: bytes | None = None,
+        image_mime: str | None = None,
     ) -> ExtractionResult:
         self.calls.append(
             {
@@ -217,6 +227,9 @@ class FakeExtractor:
                 "recorded_at": recorded_at,
                 "active_trade": active_trade,
                 "market": market,
+                # Recorded so a test can prove the picture reached the model.
+                "image": image,
+                "image_mime": image_mime,
             }
         )
         if self.fail:
@@ -438,6 +451,31 @@ def post_voice(
         "/notes/voice",
         headers=auth_headers(sub),
         files={"file": ("note.m4a", b"\x00\x01\x02fake-audio-bytes", "audio/mp4")},
+        data=data,
+    )
+
+
+def post_image(
+    client: TestClient,
+    sub: str = "user_test1",
+    trade_id: str | None = None,
+    portfolio_id: str | None = None,
+    body: bytes = b"\xff\xd8\xff\xe0fake-jpeg-bytes",
+    content_type: str = "image/jpeg",
+):
+    """Post a screenshot note. The bytes are never a real picture: the model is
+    faked, so what the test checks is that the bytes reach it intact."""
+    data: dict = {}
+    if trade_id:
+        data["trade_id"] = trade_id
+    # A note with no trade must name a market; tests that do not care get one.
+    market = portfolio_id or (None if trade_id else ensure_market(client, sub))
+    if market:
+        data["portfolio_id"] = market
+    return client.post(
+        "/notes/image",
+        headers=auth_headers(sub),
+        files={"file": ("screen.jpg", body, content_type)},
         data=data,
     )
 

@@ -1329,6 +1329,7 @@ dependencies = [
     { name = "pyjwt" },
     { name = "pypdf" },
     { name = "python-multipart" },
+    { name = "sentry-sdk" },
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "uvicorn", extra = ["standard"] },
 ]
@@ -1352,6 +1353,7 @@ requires-dist = [
     { name = "pyjwt", specifier = ">=2.14.0" },
     { name = "pypdf", specifier = ">=6.0.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
+    { name = "sentry-sdk", specifier = ">=2.69.1" },
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.52" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.52.4" },
 ]

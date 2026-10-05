@@ -18,9 +18,29 @@ MIME_EXTENSIONS = {
     "audio/aac": "aac",
 }
 
+# The storage layer's own namespace, in 1 place. The key prefix is not decoration:
+# it is what tells Cloudinary which resource type the object lives under.
+AUDIO_PREFIX = "voice-journal/"
+IMAGE_PREFIX = "note-images/"
+
 
 def extension_for(mime_type: str) -> str:
     return MIME_EXTENSIONS.get(mime_type, "m4a")
+
+
+def resource_type_for(key: str) -> str:
+    """Which Cloudinary resource type this key lives under.
+
+    Audio is served under Cloudinary's `video` type, and a picture is not. An
+    image uploaded as a video is refused outright — which is exactly how the
+    first screenshot failed, with "could not be stored" — and an image looked up
+    as a video resolves to a URL that 404s, which would leave the review screen
+    with no picture to check the reading against.
+
+    The key decides, because every call here has the key and none of them
+    carries the mime type.
+    """
+    return "image" if key.startswith(IMAGE_PREFIX) else "video"
 
 
 class AudioStorage(Protocol):
@@ -78,8 +98,8 @@ class CloudinaryStorage:
             result = upload(
                 data,
                 public_id=key,
-                resource_type="video",  # audio is served under Cloudinary's video type
-                overwrite=False,  # never clobber an existing recording
+                resource_type=resource_type_for(key),
+                overwrite=False,  # never clobber an existing note's media
             )
             if result.get("error"):
                 raise RuntimeError(f"cloudinary upload failed: {result['error']}")
@@ -112,7 +132,7 @@ class CloudinaryStorage:
 
         def _lookup() -> str | None:
             try:
-                resource = api.resource(key, resource_type="video")
+                resource = api.resource(key, resource_type=resource_type_for(key))
                 return resource.get("secure_url") or resource.get("url")
             except Exception:
                 return None
@@ -138,7 +158,7 @@ class CloudinaryStorage:
         )
 
         def _destroy() -> None:
-            result = destroy(key, resource_type="video", invalidate=True)
+            result = destroy(key, resource_type=resource_type_for(key), invalidate=True)
             # `not found` is not a failure: the goal (no recording) is met.
             if isinstance(result, dict) and result.get("error"):
                 raise RuntimeError(f"cloudinary destroy failed: {result['error']}")
@@ -150,6 +170,6 @@ class CloudinaryStorage:
         from cloudinary.utils import cloudinary_url
 
         url, _ = await asyncio.to_thread(
-            lambda: cloudinary_url(key, resource_type="video", secure=True)
+            lambda: cloudinary_url(key, resource_type=resource_type_for(key), secure=True)
         )
         return url

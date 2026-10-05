@@ -16,6 +16,7 @@ never has to invent those facts.
 """
 
 import asyncio
+import base64
 import json
 from dataclasses import dataclass
 from datetime import datetime
@@ -28,7 +29,7 @@ from app.schemas.proposal import NoteProposal
 
 log = get_logger("saytrade.extraction")
 
-EXTRACTION_SYSTEM_PROMPT = """You read one spoken trade note from a trader (English or Arabic) and return the position changes it holds.
+EXTRACTION_SYSTEM_PROMPT = """You read one trade note from a trader (English or Arabic) and return the position changes it holds. The note is either something the trader said, or a picture of a broker screen they sent.
 
 The trader is LONG ONLY. They buy shares and they sell shares. There are no short sales, ever.
 
@@ -92,7 +93,23 @@ Rules. A broken rule is a failed extraction:
 14. MONEY: every price, stop, target and level is recorded in the market's own currency (the currency given above). A trader may state an amount in that currency's MINOR unit instead — a trader in Egypt says "قرش" or "إرش" where the currency is the pound, a trader in the United States says cents where it is the dollar. One hundred minor units make one major unit, so convert it and give the amount in the market's currency. Convert ONLY a number that actually carries a minor unit word; a bare number is already in the market's currency and must be left alone. When one amount names both units together, they are a single amount and belong added together. This is the only calculation you ever do.
 15. SIZING BY MONEY: instead of a share count, a trader may give the money he put in — "I opened a position with 3000 egp at a price of 10". Put that money in amount and the price in price, and leave shares NULL: the backend divides the money by the price and rounds down to a whole share. Do NOT divide it yourself and do NOT guess a share count from the money — an amount you divide is a share count nobody can check. Use amount only when he names money for size; a share count he states himself goes in shares, and a change that has neither is left with both null.
 
+When the note is a PICTURE instead of words:
+16. Read the picture. There is no transcript, so "language" is the language the screen is written in — not the language of your answer.
+17. Read only what the screen shows. A field the screen does not show is null, exactly as rule 1 says. Never take a value from a chart, from a screen you have seen before, or from what a broker usually shows.
+18. A picture of an executed BUY opens the position (OPEN) or adds to it (ADD). A picture of an executed SELL is TRIM when shares remain afterwards, and CLOSE when it sells everything still held. A stop loss marked as executed was filled: that is a CLOSE, and the exit price is that stop.
+19. Read a stop or a take profit wherever the screen shows it, whatever status word sits beside it. An exit order that was cancelled or never filled still names the level the trader chose, and that level belongs in stop or target.
+20. A date on the screen with no year takes the year of the recording timestamp. When that date falls later in the year than the recording timestamp, it belongs to the previous year.
+
 Return only the JSON object. No markdown, no commentary."""
+
+
+def _data_url(data: bytes, mime_type: str) -> str:
+    """The picture inline, in the same request as the words.
+
+    Nothing is uploaded for the provider to fetch, so a screenshot of a broker
+    account cannot be reached through a URL that outlives the call.
+    """
+    return f"data:{mime_type};base64,{base64.b64encode(data).decode()}"
 
 
 @dataclass
@@ -146,6 +163,8 @@ class Extractor(Protocol):
         recorded_at: datetime | None = None,
         active_trade: TradeContext | None = None,
         market: MarketContext | None = None,
+        image: bytes | None = None,
+        image_mime: str | None = None,
     ) -> ExtractionResult: ...
 
 
@@ -173,10 +192,19 @@ class OpenAIExtractor:
         recorded_at: datetime | None = None,
         active_trade: TradeContext | None = None,
         market: MarketContext | None = None,
+        image: bytes | None = None,
+        image_mime: str | None = None,
     ) -> ExtractionResult:
         client = self._client()
 
         context = transcript
+        if image is not None:
+            # An image note has no transcript, so the picture carries the note.
+            # Say so, and keep every context line below.
+            context = (
+                "The trader sent a picture of one of their broker screens "
+                "instead of speaking. Read the trade from the picture.\n\n" + context
+            ).strip()
         if recorded_at is not None:
             context += (
                 f"\n\nRecording timestamp (UTC): {recorded_at.isoformat()}."
@@ -217,12 +245,25 @@ class OpenAIExtractor:
                 "not a limit on what they may name."
             )
 
-        def _call(user_content: str) -> str:
+        def _call(user_text: str) -> str:
+            # The picture travels in the same request as the words: no upload for
+            # the provider to fetch, and no URL that outlives the call.
+            content: Any = user_text
+            if image is not None:
+                content = [
+                    {"type": "text", "text": user_text},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": _data_url(image, image_mime or "image/jpeg")
+                        },
+                    },
+                ]
             response = client.chat.completions.create(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": EXTRACTION_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
+                    {"role": "user", "content": content},
                 ],
                 # No temperature: the GPT-5 and GPT-6 families reject anything but
                 # the default and answer 400 ("temperature does not support 0 with
@@ -235,9 +276,10 @@ class OpenAIExtractor:
         last_error: Exception | None = None
         for attempt in range(2):
             log.info(
-                "extract: %s reading %d characters%s",
+                "extract: %s reading %d characters%s%s",
                 self.model,
                 len(transcript),
+                " + 1 image" if image is not None else "",
                 " (retry)" if attempt else "",
             )
             content = await asyncio.to_thread(

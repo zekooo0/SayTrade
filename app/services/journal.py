@@ -31,7 +31,7 @@ from app.providers.extraction import (
     MarketContext,
     TradeContext,
 )
-from app.providers.storage import AudioStorage
+from app.providers.storage import AUDIO_PREFIX, IMAGE_PREFIX, AudioStorage
 from app.providers.transcription import Transcriber, transcription_keywords
 from app.schemas.api import NoteView
 from app.log import get_logger
@@ -48,6 +48,7 @@ from app.services.notes import (
 
 SOURCE_VOICE = "VOICE"
 SOURCE_TEXT = "TEXT"
+SOURCE_IMAGE = "IMAGE"
 
 log = get_logger("saytrade.journal")
 
@@ -60,7 +61,17 @@ def new_storage_key(user_id: UUID, mime_type: str) -> str:
     (the key must exist before the row, and it never changes afterwards).
     """
     _ = mime_type
-    return f"voice-journal/{user_id}/{uuid4()}"
+    return f"{AUDIO_PREFIX}{user_id}/{uuid4()}"
+
+
+def new_image_key(user_id: UUID) -> str:
+    """Stable key for an uploaded screenshot: note-images/{user_id}/{random}.
+
+    A different prefix from the audio, because the prefix is what tells
+    Cloudinary which resource type the object lives under. No extension, for the
+    same reason the audio key has none.
+    """
+    return f"{IMAGE_PREFIX}{user_id}/{uuid4()}"
 
 
 async def _owned_trade_or_404(
@@ -190,6 +201,60 @@ async def receive_text_note(
     return await note_service.note_view(session, note)
 
 
+async def receive_image_note(
+    session: AsyncSession,
+    user: User,
+    data: bytes,
+    mime_type: str,
+    storage: AudioStorage,
+    entitlements: Entitlements,
+    trade_id: UUID | None = None,
+    portfolio_id: UUID | None = None,
+    now: datetime | None = None,
+) -> NoteView:
+    """Reserve one allowance unit, persist the RECEIVED note, store the image.
+
+    The model reads the picture instead of a transcript, so this spends the AI
+    allowance exactly as a voice note does. The reservation and the row commit
+    together; the upload happens after the commit, and if it fails the note is
+    marked FAILED(STORAGE) so the client can send the picture again.
+    """
+    now = now or datetime.now(timezone.utc)
+    # Before the allowance is spent: a note that cannot go anywhere must not cost
+    # the trader an AI unit.
+    _require_a_home(trade_id, portfolio_id)
+    await entitlements.reserve_voice(session, user, now)
+    owned_trade_id = await _owned_trade_or_404(session, user, trade_id)
+    owned_portfolio_id = await _owned_portfolio_or_404(session, user, portfolio_id)
+
+    note = Note(
+        user_id=user.id,
+        trade_id=owned_trade_id,
+        portfolio_id=owned_portfolio_id,
+        source=SOURCE_IMAGE,
+        status=STATUS_RECEIVED,
+        image_key=new_image_key(user.id),
+        mime_type=mime_type,
+        byte_size=len(data),
+    )
+    session.add(note)
+    await session.commit()
+
+    try:
+        assert note.image_key is not None
+        await storage.save(note.image_key, data, mime_type)
+    except Exception as exc:
+        note.status = STATUS_FAILED
+        note.failed_stage = "STORAGE"
+        note.error_message = f"{type(exc).__name__}: {exc}"[:2000]
+        await session.commit()
+        raise StorageUnavailableError(
+            "The screenshot could not be stored. Send it again."
+        ) from exc
+
+    return await note_service.note_view(session, note, storage)
+
+
 async def _extraction_context(
     session: AsyncSession, note: Note
 ) -> TradeContext | None:
@@ -305,6 +370,7 @@ async def process_note(
         source = note.source
         text = note.text
         audio_key = note.audio_key
+        image_key = note.image_key
         mime_type = note.mime_type
         status = note.status
 
@@ -338,20 +404,31 @@ async def process_note(
                     return
 
             if status != STATUS_EXTRACTED:
-                if not text:
-                    raise RuntimeError("the note has no text to read")
+                # A note carries words or a picture. An image note has no
+                # transcript at all: the model reads the screenshot itself.
+                image = None
+                if image_key:
+                    image = await storage.read(image_key)
+                if not text and image is None:
+                    raise RuntimeError("the note has no text and no image to read")
                 market = await _market_context(session, note)
                 log.info(
-                    "note %s: extracting | market=%s | text=%r",
+                    "note %s: extracting | market=%s | image=%s | text=%r",
                     note_id,
                     market.name if market else None,
+                    bool(image),
                     text,
                 )
                 extracted = await extractor.extract(
-                    text,
+                    # An image note has no text, and the contract is a string.
+                    # Passing None reached the provider's `len(transcript)` and
+                    # failed the note inside a log line.
+                    text or "",
                     recorded_at=note.created_at,
                     active_trade=await _extraction_context(session, note),
                     market=market,
+                    image=image,
+                    image_mime=mime_type if image is not None else None,
                 )
                 # The summary is written from the changes, never from the
                 # transcript, so it cannot repeat a mishearing. Written here so

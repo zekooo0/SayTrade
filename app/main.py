@@ -7,6 +7,7 @@ Tests swap these app.state slots for fakes and mint Clerk-shaped tokens.
 
 import time
 
+import sentry_sdk
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -25,6 +26,35 @@ from app.providers.transcription import OpenAITranscriber
 
 setup_logging(settings.log_level)
 log = get_logger("saytrade.api")
+
+# Errors and traces go to Sentry. This runs BEFORE the app is created, and that
+# order is load-bearing: the FastAPI integration patches the framework while the
+# SDK initialises, so an app built first is an app that reports nothing.
+#
+# No DSN means no reporting — which is what the test suite relies on, so it never
+# posts from a test run.
+if settings.sentry_dsn:
+    sentry_sdk.init(
+        dsn=settings.sentry_dsn,
+        environment=settings.sentry_environment,
+        # The user id, and the request data around the error. Headers whose names
+        # look like credentials are scrubbed by the SDK's own denylist; the
+        # Authorization header never leaves in a clear form.
+        send_default_pii=True,
+        # Every transaction, because this app's traffic is tiny and the value is
+        # in seeing the whole path a slow note took, not a sample of it. Lower
+        # this to a fraction if the volume ever justifies it.
+        traces_sample_rate=1.0,
+        # The profiler runs on whatever transaction is active, so a slow request
+        # arrives with the frame that made it slow.
+        profile_session_sample_rate=1.0,
+        profile_lifecycle="trace",
+        # The app already logs one line per request. Sending those makes the log
+        # a timeline around the error instead of a single event.
+        enable_logs=True,
+        # Off unless SENTRY_DEBUG is set, like the web side.
+        debug=settings.sentry_debug,
+    )
 
 app = FastAPI(title="SayTrade API", version="0.2.0")
 

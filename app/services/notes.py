@@ -393,6 +393,14 @@ async def note_view(session: AsyncSession, note: Note, storage=None) -> NoteView
             audio_url = await storage.delivery_url(note.audio_key)
         except Exception:
             audio_url = None
+    # Same contract as the audio: a delivery URL that may fail, and a missing
+    # URL must not break the review screen.
+    image_url = None
+    if note.image_key and storage is not None:
+        try:
+            image_url = await storage.delivery_url(note.image_key)
+        except Exception:
+            image_url = None
     return NoteView(
         id=note.id,
         status=note.status,
@@ -407,6 +415,7 @@ async def note_view(session: AsyncSession, note: Note, storage=None) -> NoteView
         proposal=note.proposal,
         changes=[change_view(c) for c in changes],
         audio_url=audio_url,
+        image_url=image_url,
         duration_ms=note.duration_ms,
         transcription_provider=note.transcription_provider,
         transcription_model=note.transcription_model,

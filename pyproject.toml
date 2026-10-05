@@ -17,6 +17,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "sqlalchemy[asyncio]>=2.0.52",
     "uvicorn[standard]>=0.52.4",
+    "sentry-sdk>=2.69.1",
 ]
 
 [tool.fastapi]
