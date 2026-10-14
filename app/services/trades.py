@@ -5,12 +5,12 @@ Every number is derived from the change rows at read time.
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain import position as pos
 from app.domain.errors import TradeNotFoundError
-from app.models import Portfolio, Prediction, Trade, User
+from app.models import Change, Note, Portfolio, Prediction, Trade, User
 from app.schemas.api import TradeDetailView, TradeSummaryView, PredictionView, d
 from app.services import notes as note_service
 
@@ -94,3 +94,56 @@ async def get_trade(
         warnings=pos.warnings(changes, closed=trade.closed_at is not None),
         prediction=await prediction_view(session, trade.id),
     )
+
+
+async def delete_trade(
+    session: AsyncSession, user: User, trade_id: UUID, storage=None
+) -> None:
+    """Delete a trade and everything recorded on it. A HARD delete.
+
+    The trader asked for this trade to be gone, so nothing about it is left
+    behind: the notes he recorded on it, the change rows those notes applied,
+    the prediction it carried, the trade row itself, and the media in storage.
+    Nothing here is restored, and a delete cannot be undone.
+
+    A note whose ``trade_id`` is NULL is not touched: it was never recorded
+    against this trade, so it is not part of it.
+
+    The trade row is taken with ``with_for_update()``. The applier locks the
+    trade in the same order before it writes, so an approval cannot add a change
+    row under a trade that is disappearing, and a delete cannot race one.
+
+    Order matters: ``predictions`` and ``notes`` both point at ``trades``, and
+    ``changes`` points at ``notes``. No foreign key cascades, so the children go
+    first, deepest one first, or the delete is refused by the database.
+    """
+    trade = await session.scalar(
+        select(Trade)
+        .where(Trade.id == trade_id, Trade.user_id == user.id)
+        .with_for_update()
+    )
+    if trade is None:
+        raise TradeNotFoundError("Trade not found")
+
+    notes = list(
+        await session.scalars(
+            select(Note).where(Note.trade_id == trade.id, Note.user_id == user.id)
+        )
+    )
+    note_ids = [note.id for note in notes]
+
+    # The media goes with the rows, best effort: the trader asked for the trade
+    # to be gone, and a recording or a screenshot must not outlive it in a
+    # bucket. A storage failure cannot keep the rows alive.
+    if storage is not None:
+        for key in [k for note in notes for k in (note.audio_key, note.image_key) if k]:
+            try:
+                await storage.delete(key)
+            except Exception:
+                pass
+
+    await session.execute(delete(Prediction).where(Prediction.trade_id == trade.id))
+    if note_ids:
+        await session.execute(delete(Change).where(Change.note_id.in_(note_ids)))
+        await session.execute(delete(Note).where(Note.id.in_(note_ids)))
+    await session.delete(trade)

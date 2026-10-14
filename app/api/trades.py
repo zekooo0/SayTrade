@@ -42,3 +42,24 @@ async def get_trade(
         )
     except DomainError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
+
+
+@router.delete("/{trade_id}", status_code=204)
+async def delete_trade(
+    trade_id: UUID,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(current_user),
+):
+    """Delete a trade for good: its notes, its changes, its prediction, its media.
+
+    A HARD delete with no undo. The trader is warned in the UI before the call
+    is made.
+    """
+    try:
+        await trade_service.delete_trade(
+            session, user, trade_id, request.app.state.storage
+        )
+    except DomainError as exc:
+        await session.rollback()
+        raise HTTPException(status_code=exc.status_code, detail=exc.message) from exc
