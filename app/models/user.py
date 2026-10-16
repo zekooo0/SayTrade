@@ -31,12 +31,12 @@ class User(Base):
         String(64), unique=True, nullable=False
     )
 
-    # The plan this account is on: FREE or PRO. Stored, not derived, so a plan
-    # can be switched by hand until a payment provider exists. A new account is
-    # provisioned as PRO (see provision_user); this default is the safety net
-    # for a row inserted without the column.
+    # The plan this account is on: FREE or PRO. Stored, not derived, so an
+    # operator can still comp an account (`scripts/set_plan.py`). A new account
+    # starts on FREE (see provision_user), because a plan is bought now; this
+    # default is the safety net for a row inserted without the column.
     plan: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default=text("'PRO'")
+        String(16), nullable=False, server_default=text("'FREE'")
     )
 
     created_at: Mapped[datetime] = mapped_column(

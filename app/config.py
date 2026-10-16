@@ -46,18 +46,35 @@ class Settings(BaseSettings):
     # --- Monetization ---
     # The free plan holds a small number of ACTIVE trades and has a generous
     # monthly cap on AI voice notes (an abuse guard, not a product limit).
-    # Pro lifts the trade limit. Prices are shown, not charged: there is no
-    # checkout yet, so plans are switched by hand.
+    # Pro lifts the trade limit, and a trader reaches it through the payment
+    # provider below.
     free_active_trades: int = 3
     free_voice_notes_per_month: int = 100
     # None means unlimited.
     pro_active_trades: int | None = None
     pro_voice_notes_per_month: int | None = None
-    pro_price_usd: int = 5
-    # Where "Upgrade" sends the trader. Empty hides nothing — the UI shows the
-    # price and says payments are not open yet. Set it to a Stripe/Gumroad
-    # payment link, or to mailto:you@example.com, when you have one.
-    upgrade_url: str = ""
+
+    # --- LemonSqueezy (payments) ---
+    # The seller of record: it takes the payment, the sales tax and the refund,
+    # and it owns the PRICE. No price lives in this file — a second copy of a
+    # number would disagree with the one on the checkout page.
+    #
+    # An empty key means no checkout: POST /billing/checkout answers 503, and the
+    # app goes on saying Pro is coming.
+    lemonsqueezy_api_key: str | None = None
+    lemonsqueezy_store_id: str | None = None
+    # One variant is one price. Both variants grant the same plan; the billing
+    # period is the only difference.
+    lemonsqueezy_variant_monthly: str | None = None
+    lemonsqueezy_variant_yearly: str | None = None
+    # The signing secret of the webhook, set when the webhook is created. Empty
+    # means the webhook refuses every call, which is the safe default.
+    lemonsqueezy_webhook_secret: str | None = None
+    # Accept a test-mode purchase. True while rehearsing, FALSE in production:
+    # a rehearsal must never grant a real plan.
+    lemonsqueezy_test_mode: bool = False
+    # Where the checkout returns the trader. The app's front door is the board.
+    lemonsqueezy_redirect_url: str = "https://saytrade.app/trades"
 
     # --- Image intake limits ---
     # A screenshot of a broker screen. 8 MB covers a phone screenshot at full

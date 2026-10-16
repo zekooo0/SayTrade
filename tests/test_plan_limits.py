@@ -18,19 +18,19 @@ from conftest import (
 )
 
 
-def test_a_new_account_starts_on_pro(client):
-    """Pro has no price and no payment provider, so a new account gets
-    everything from its first request. An operator can still move one down."""
+def test_a_new_account_starts_on_free(client):
+    """A plan is bought now, so handing out Pro at sign-up would give the paid
+    plan away. An operator can still move one account up by hand."""
     body = client.get("/me", headers=auth_headers()).json()
 
-    assert body["plan"] == "PRO"
-    assert body["usage"]["active_trades_limit"] is None  # unlimited
-
-    # The switch still works the other way, which is what makes FREE real.
-    set_plan("user_test1", "FREE")
-    body = client.get("/me", headers=auth_headers()).json()
     assert body["plan"] == "FREE"
     assert body["usage"]["active_trades_limit"] == 3
+
+    # The switch still works the other way, which is what makes PRO real.
+    set_plan("user_test1", "PRO")
+    body = client.get("/me", headers=auth_headers()).json()
+    assert body["plan"] == "PRO"
+    assert body["usage"]["active_trades_limit"] is None  # unlimited
 
 
 def test_the_free_plan_holds_three_active_trades(client):
@@ -46,8 +46,9 @@ def test_the_free_plan_holds_three_active_trades(client):
     assert blocked.status_code == 402, blocked.text
     detail = blocked.json()["detail"]
     assert "3 active trades" in detail
-    assert "Pro is coming" in detail
-    assert "$" not in detail  # no price reaches a user while Pro has no price
+    assert "Upgrade to Pro" in detail
+    # No price reaches a user: the checkout page owns the number.
+    assert "$" not in detail
 
     # The note is not lost: it stays extracted, and it approves once a slot frees.
     assert (
@@ -153,7 +154,8 @@ def test_the_usage_view_describes_the_plan(client):
     assert usage["voice_notes_limit"] == 2
 
     entitlements = body["entitlements"]
-    # No price: Pro has no price on the page until payments open.
+    # No price and no link: the provider owns the price, and the checkout link is
+    # made per trader by POST /billing/checkout.
     assert "pro_price_usd" not in entitlements
+    assert "upgrade_url" not in entitlements
     assert entitlements["pro_active_trades"] is None
-    assert entitlements["upgrade_url"] == "https://example.com/upgrade"

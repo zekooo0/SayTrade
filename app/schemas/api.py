@@ -308,3 +308,9 @@ class AnalyticsView(BaseModel):
     equity_curve: list[EquityPoint] = Field(default_factory=list)
     r_distribution: list[RBucket] = Field(default_factory=list)
     monthly: list[MonthBucket] = Field(default_factory=list)
+
+
+class BillingUrlView(BaseModel):
+    """A payments URL for the client to open: a checkout, or the portal."""
+
+    url: str

@@ -116,3 +116,14 @@ class AuthUnavailableError(DomainError):
     """
 
     status_code = 503
+
+
+class BillingUnavailableError(DomainError):
+    """503: the payment provider is not configured, or could not be reached.
+
+    Not a 4xx: the trader did nothing wrong. A checkout that cannot be made yet
+    is a deployment fact, and the app shows the same "Pro is coming" line it
+    showed before payments opened.
+    """
+
+    status_code = 503

@@ -25,6 +25,10 @@ os.environ.setdefault(
 os.environ.setdefault("CLERK_FRONTEND_API", "https://test.clerk.accounts.dev")
 # Exhaust the monthly voice guard quickly in tests; keep the real trade limit.
 os.environ.setdefault("FREE_VOICE_NOTES_PER_MONTH", "2")
+# The payments switch is PINNED, never inherited: a developer's rehearsal .env
+# carries LEMONSQUEEZY_TEST_MODE=true, and the checkout route would then mint a
+# rehearsal checkout while the tests assert production behaviour.
+os.environ["LEMONSQUEEZY_TEST_MODE"] = "false"
 # The suite must never post to Sentry: a test run is not a production incident.
 # Set outright rather than with setdefault — an empty DSN is the switch, and a
 # value inherited from the shell must not be able to turn reporting back on.
@@ -40,10 +44,16 @@ from app.billing.entitlements import Entitlements  # noqa: E402
 from app.db import engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.providers.extraction import ExtractionResult  # noqa: E402
+from app.providers.lemonsqueezy import LemonSqueezyError  # noqa: E402
 from app.providers.transcription import TranscriptionResult  # noqa: E402
+from app.services.billing import BillingPolicy  # noqa: E402
 
 TEST_ISSUER = "https://test.clerk.accounts.dev"
 TEST_KID = "test-kid"
+
+# The signing secret the webhook checks against. The BILLING tests sign their own
+# payloads with it, so the signature check is exercised for real and never faked.
+WEBHOOK_SECRET = "test-webhook-secret"
 
 TEST_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
@@ -241,6 +251,50 @@ class FakeExtractor:
         )
 
 
+class FakeLemonSqueezy:
+    """Stands in for the payment provider's API.
+
+    Records what it was asked, so a test can prove the account id and the variant
+    reached the call, and answers a subscription whose portal link the portal
+    route reads back. ``fail`` makes it refuse, which must reach the client as a
+    503 and never as a silent success.
+    """
+
+    def __init__(self):
+        self.checkouts: list[dict] = []
+        self.subscriptions: dict[str, dict] = {}
+        self.fail = False
+
+    async def create_checkout(
+        self,
+        *,
+        user_id: str,
+        period: str,
+        redirect_url: str,
+        test_mode: bool,
+        email: str | None = None,
+    ) -> str:
+        if self.fail:
+            raise LemonSqueezyError("simulated provider outage")
+        self.checkouts.append(
+            {
+                "user_id": user_id,
+                "period": period,
+                "redirect_url": redirect_url,
+                "test_mode": test_mode,
+                "email": email,
+            }
+        )
+        return f"https://fake-store.lemonsqueezy.com/checkout/buy/{period}-{user_id}"
+
+    async def get_subscription(self, subscription_id: str) -> dict:
+        if self.fail:
+            raise LemonSqueezyError("simulated provider outage")
+        if subscription_id not in self.subscriptions:
+            raise LemonSqueezyError(f"no subscription {subscription_id}")
+        return self.subscriptions[subscription_id]
+
+
 class FakeSummarizer:
     """Stands in for the summary model.
 
@@ -299,7 +353,7 @@ async def reset_database() -> None:
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE changes, notes, trades, portfolios, users "
+                "TRUNCATE changes, notes, trades, portfolios, subscriptions, users "
                 "RESTART IDENTITY CASCADE"
             )
         )
@@ -372,8 +426,8 @@ def set_plan(sub: str, plan: str) -> None:
     """Switch a test user's plan, the way an operator would by hand.
 
     Fails loudly when there is no such row. A silent no-op here means the test
-    is really running against a freshly provisioned account — which is PRO — so
-    every later assertion about FREE would be a lie.
+    is really running against a freshly provisioned account, so every later
+    assertion about the plan would be a lie.
     """
     import asyncio
 
@@ -388,15 +442,15 @@ def set_plan(sub: str, plan: str) -> None:
     if not asyncio.run(_update()):
         raise AssertionError(
             f"set_plan: no user row for {sub!r}. Provision the account first — "
-            "a request to /me does it. A new account is PRO, not FREE."
+            "a request to /me does it."
         )
 
 
 def on_free(client: TestClient, sub: str = "user_test1") -> None:
     """Put a test account on FREE.
 
-    A new account is provisioned as PRO, so a test about the Free plan has to
-    say so. The /me call creates the row that set_plan then updates.
+    A new account already starts on FREE; this states it outright, so a test
+    about the Free plan never depends on the provisioning default.
     """
     client.get("/me", headers=auth_headers(sub))
     set_plan(sub, "FREE")
@@ -420,9 +474,12 @@ def client():
         free_voice_notes_per_month=2,
         pro_active_trades=None,
         pro_voice_notes_per_month=None,
-        pro_price_usd=5,
-        upgrade_url="https://example.com/upgrade",
     )
+    # Payments: a fake provider, so no test reaches LemonSqueezy. The webhook
+    # secret is a fixed test value that the billing tests sign their payloads
+    # with — the signature check itself is never faked.
+    app.state.lemonsqueezy = FakeLemonSqueezy()
+    app.state.billing = BillingPolicy(webhook_secret=WEBHOOK_SECRET, test_mode=False)
     with TestClient(app) as test_client:
         yield test_client
 

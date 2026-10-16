@@ -1,7 +1,8 @@
 """The plan switch: give an account PRO, or take it back.
 
-Payments do not exist yet, so a plan is a stored value that a human sets. This
-is that human's tool. Nothing else in the app writes `users.plan`.
+A plan is bought now, and the payment provider's webhook is what writes it when a
+trader pays. This script is the operator's tool beside that: a comp, a fix, a
+manual downgrade. Nothing else in the app writes `users.plan`.
 
     # what accounts exist, and who is on what
     PYTHONPATH=. ./.venv/bin/python scripts/set_plan.py --list

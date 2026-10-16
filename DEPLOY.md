@@ -69,6 +69,22 @@ Seven, all set. Secrets are marked `--secret` and cannot be read back:
 | `CLOUDINARY_API_SECRET` | secret |
 | `CORS_ORIGINS` | plain — `https://saytrade-web.vercel.app` |
 
+Payments add six more, from the LemonSqueezy dashboard (Settings » API keys, and
+the webhook's signing secret):
+
+| Key | Kind |
+| --- | --- |
+| `LEMONSQUEEZY_API_KEY` | secret — the LIVE key |
+| `LEMONSQUEEZY_STORE_ID` | plain |
+| `LEMONSQUEEZY_VARIANT_MONTHLY` | plain — the monthly variant id |
+| `LEMONSQUEEZY_VARIANT_YEARLY` | plain — the yearly variant id |
+| `LEMONSQUEEZY_WEBHOOK_SECRET` | secret — the webhook's signing secret |
+
+While `LEMONSQUEEZY_API_KEY` is empty, payments are off: `POST /billing/checkout`
+answers 503 and the app keeps saying "Pro is coming". Leave
+`LEMONSQUEEZY_TEST_MODE` unset in production — a rehearsal purchase must never
+grant a real plan.
+
 ```
 ./.venv/bin/fastapi cloud env list                 # names only
 ./.venv/bin/fastapi cloud env set KEY VALUE --secret
@@ -90,7 +106,7 @@ cannot run at boot. Run it **from the machine** against Neon:
 cd backend/sayTrade
 NEON_URL=$(grep -m1 '^DATABASE_URL=' .env.neon | cut -d= -f2- | tr -d '"')
 DATABASE_URL="$NEON_URL" ./.venv/bin/alembic upgrade head
-DATABASE_URL="$NEON_URL" ./.venv/bin/alembic current      # expect c1e93b7a4d20 (head)
+DATABASE_URL="$NEON_URL" ./.venv/bin/alembic current      # expect b4e6d19a75c3 (head)
 ```
 
 `alembic/env.py` takes the URL from `settings.database_url`, and a real

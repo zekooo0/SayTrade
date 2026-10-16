@@ -55,8 +55,6 @@ class Entitlements:
         free_voice_notes_per_month: int | None = 100,
         pro_active_trades: int | None = None,
         pro_voice_notes_per_month: int | None = None,
-        pro_price_usd: int = 5,
-        upgrade_url: str = "",
     ):
         self.limits = {
             PLAN_FREE: PlanLimits(
@@ -68,8 +66,6 @@ class Entitlements:
                 voice_notes_per_month=pro_voice_notes_per_month,
             ),
         }
-        self.pro_price_usd = pro_price_usd
-        self.upgrade_url = upgrade_url
 
     @classmethod
     def from_settings(cls, settings) -> "Entitlements":  # noqa: ANN001 - Settings
@@ -79,8 +75,6 @@ class Entitlements:
             free_voice_notes_per_month=settings.free_voice_notes_per_month,
             pro_active_trades=settings.pro_active_trades,
             pro_voice_notes_per_month=settings.pro_voice_notes_per_month,
-            pro_price_usd=settings.pro_price_usd,
-            upgrade_url=settings.upgrade_url,
         )
 
     # --- plan ---
@@ -94,11 +88,13 @@ class Entitlements:
         return self.limits.get(plan, self.limits[PLAN_FREE])
 
     def _upgrade_hint(self) -> str:
-        """One line about Pro, with NO price: there is no price on the page
-        until payments open. Do not reintroduce a number here."""
-        if self.upgrade_url:
-            return f" Pro is coming: {self.upgrade_url}"
-        return " Pro is coming — it lifts this limit."
+        """One line about Pro, with NO price.
+
+        The price belongs to the payment provider and it is shown on the
+        checkout page, so a number here would be a second answer to a question
+        one other place owns. The app's upgrade button takes the trader there.
+        """
+        return " Upgrade to Pro for unlimited active trades."
 
     # --- counts ---
 
@@ -193,11 +189,11 @@ class Entitlements:
     def entitlements_view(self) -> dict[str, object]:
         """What the client needs to show the plan honestly.
 
-        No price. Pro has no price until payments open, and any number put here
-        reaches the UI. `pro_price_usd` stays in config for the day it does.
+        No price, and no upgrade link. The price belongs to the payment provider,
+        and the link is made per trader by POST /billing/checkout — a number or a
+        URL here would be a second answer to a question one other place owns.
         """
         return {
             "free_active_trades": self.limits[PLAN_FREE].active_trades,
             "pro_active_trades": self.limits[PLAN_PRO].active_trades,
-            "upgrade_url": self.upgrade_url,
         }

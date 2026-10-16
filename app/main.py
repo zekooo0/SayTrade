@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import analytics, me, notes, portfolios, trades
+from app.api import analytics, billing, me, notes, portfolios, trades
 from app.auth.jwks import HttpJwksFetcher
 from app.billing.entitlements import Entitlements
 from app.config import settings
@@ -20,9 +20,11 @@ from app.db import SessionLocal
 from app.domain.errors import DomainError
 from app.log import get_logger, setup as setup_logging
 from app.providers.extraction import OpenAIExtractor
+from app.providers.lemonsqueezy import LemonSqueezyClient
 from app.providers.storage import CloudinaryStorage
 from app.providers.summary import OpenAISummarizer
 from app.providers.transcription import OpenAITranscriber
+from app.services.billing import BillingPolicy
 
 setup_logging(settings.log_level)
 log = get_logger("saytrade.api")
@@ -114,15 +116,38 @@ app.state.summarizer = OpenAISummarizer(
     model=settings.openai_extraction_model,
 )
 app.state.entitlements = Entitlements.from_settings(settings)
+# Payments. The client is None until a key and a store are configured, and the
+# checkout route answers 503 while it is None — so a half-configured deployment
+# keeps saying "Pro is coming" instead of offering a button that cannot work.
+app.state.lemonsqueezy = (
+    LemonSqueezyClient(
+        api_key=settings.lemonsqueezy_api_key,
+        store_id=settings.lemonsqueezy_store_id,
+        variants={
+            "monthly": settings.lemonsqueezy_variant_monthly or "",
+            "yearly": settings.lemonsqueezy_variant_yearly or "",
+        },
+    )
+    if settings.lemonsqueezy_api_key and settings.lemonsqueezy_store_id
+    else None
+)
+# What the webhook accepts: the signing secret, and whether a test-mode purchase
+# may write a plan on this deployment.
+app.state.billing = BillingPolicy(
+    webhook_secret=settings.lemonsqueezy_webhook_secret or "",
+    test_mode=settings.lemonsqueezy_test_mode,
+)
 # Background processing needs its own session per note, independent of the
 # request session that created it.
 app.state.session_factory = SessionLocal
 
 log.info(
-    "SayTrade API ready | extraction=%s | summary=%s | transcription=%s | log=%s",
+    "SayTrade API ready | extraction=%s | summary=%s | transcription=%s | "
+    "billing=%s | log=%s",
     settings.openai_extraction_model,
     settings.openai_extraction_model,
     settings.openai_transcription_model,
+    "lemonsqueezy" if app.state.lemonsqueezy else "off",
     settings.log_level,
 )
 
@@ -165,3 +190,4 @@ app.include_router(trades.router)
 app.include_router(me.router)
 app.include_router(portfolios.router)
 app.include_router(analytics.router)
+app.include_router(billing.router)
