@@ -246,6 +246,20 @@ class StopBreach(BaseModel):
     closed_at: datetime | None = None
 
 
+class MoneyScopeView(BaseModel):
+    """The market the money figures are scoped to.
+
+    Money is only meaningful inside one currency, so the client asks for one
+    market and the figures below cover its trades alone. ``None`` on the view
+    means no market was named: every market was added together, which the API
+    allows for a caller that has only one.
+    """
+
+    portfolio_id: UUID | None = None
+    name: str | None = None
+    currency: str | None = None
+
+
 class AnalyticsView(BaseModel):
     """The scoreboard. Every number is derived from change rows on read.
 
@@ -269,6 +283,10 @@ class AnalyticsView(BaseModel):
     # correct prediction, and that is the point of measuring it separately.
     prediction_accuracy: PredictionAccuracyView | None = None
 
+    # The market the money figures below cover. None means every market was
+    # added together, which is only honest when they share one currency.
+    money_scope: MoneyScopeView | None = None
+
     # --- money ---
     total_pnl: str | None = None
     average_pnl: str | None = None
@@ -284,6 +302,11 @@ class AnalyticsView(BaseModel):
     rated_trades: int = 0
     unrated_trades: int = 0
     unpriced_trades: int = 0  # closed with a sale that carries no price
+    # The two other reasons a closed trade is left out of the R statistics.
+    # The three add up to unrated_trades, and no trade is counted twice: a
+    # priced exit is what makes the other two reasons possible at all.
+    unrated_no_stop: int = 0  # priced exit, but no initial stop was recorded
+    unrated_no_risk: int = 0  # a stop and an exit, but no measurable R
     average_r: str | None = None
     best_r: str | None = None
     worst_r: str | None = None

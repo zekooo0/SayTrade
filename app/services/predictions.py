@@ -13,7 +13,7 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Prediction, User
+from app.models import Prediction, Trade, User
 from app.schemas.api import PredictionAccuracyView, d
 
 # Under this many judged predictions the number says nothing. The analytics page
@@ -22,22 +22,27 @@ from app.schemas.api import PredictionAccuracyView, d
 THIN_SAMPLE = 5
 
 
-async def accuracy(session: AsyncSession, user: User) -> PredictionAccuracyView:
+async def accuracy(
+    session: AsyncSession, user: User, portfolio_id: UUID | None = None
+) -> PredictionAccuracyView:
     """How often the trader's predictions about what happens next were right.
 
     PENDING is excluded from the percentage, per the product rule: a prediction
     that has not been judged yet is not evidence either way. It is still counted,
     so the page can say how many are waiting.
+
+    ``portfolio_id`` limits the answer to one market's predictions, through the
+    trade each one belongs to. Without it every prediction the trader made is
+    counted, which is the unscoped view.
     """
-    counts = dict(
-        (
-            await session.execute(
-                select(Prediction.result, func.count())
-                .where(Prediction.user_id == user.id)
-                .group_by(Prediction.result)
-            )
-        ).all()
+    query = select(Prediction.result, func.count()).where(
+        Prediction.user_id == user.id
     )
+    if portfolio_id is not None:
+        query = query.join(Trade, Trade.id == Prediction.trade_id).where(
+            Trade.portfolio_id == portfolio_id
+        )
+    counts = dict((await session.execute(query.group_by(Prediction.result))).all())
 
     correct = counts.get("CORRECT", 0)
     incorrect = counts.get("INCORRECT", 0)

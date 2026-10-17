@@ -11,6 +11,7 @@ The workhorse trade: 100 shares entered at 100 with a stop at 95, so one R is
 from conftest import (
     approve,
     auth_headers,
+    ensure_market,
     open_a_trade,
     proposal,
     record_text,
@@ -211,3 +212,189 @@ def test_the_scoreboard_is_scoped_to_the_trader(client):
     assert other["total_pnl"] is None
     assert other["equity_curve"] == []
     assert other["notes_total"] == 0
+
+
+# --------------------------------------------------------------------------
+# The money has a market, and the sample has reasons
+# --------------------------------------------------------------------------
+
+
+def make_market(client, name: str, exchange: str, currency: str, sub: str = "user_test1") -> str:
+    """A market with its own currency, created through the API the app uses."""
+    resp = client.post(
+        "/portfolios",
+        headers=auth_headers(sub),
+        json={"name": name, "exchange": exchange, "currency": currency},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()["id"]
+
+
+def open_in(client, market_id: str, symbol: str, stop: str | None = "95", sub: str = "user_test1"):
+    """Open 100 shares at 100 inside one named market."""
+    change: dict = {"kind": "OPEN", "shares": "100", "price": "100", "target": "120"}
+    if stop is not None:
+        change["stop"] = stop
+    set_proposal(client, proposal([change], symbol=symbol))
+    note = record_text(client, "I opened a position", sub=sub, portfolio_id=market_id)
+    result = approve(client, note["id"], sub)
+    assert result.status_code == 200, result.text
+
+
+def close_in(client, market_id: str, symbol: str, exit_price: str | None, sub: str = "user_test1"):
+    """Close that trade. A note resolves inside its own market, so name it."""
+    change: dict = {"kind": "CLOSE"}
+    if exit_price is not None:
+        change["price"] = exit_price
+    set_proposal(client, proposal([change], symbol=symbol))
+    note = record_text(client, f"I closed {symbol}", sub=sub, portfolio_id=market_id)
+    result = approve(client, note["id"], sub)
+    assert result.status_code == 200, result.text
+
+
+def scoped(client, market_id: str, sub: str = "user_test1") -> dict:
+    resp = client.get(
+        "/analytics", headers=auth_headers(sub), params={"portfolio_id": market_id}
+    )
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_a_market_shows_only_its_own_numbers(client):
+    """100 shares at 100 with a stop at 95 is one R of 5.00 a share.
+
+    110 pays 1000 (+2R) in the dollar book; 95 pays -500 (-1R) in the Egyptian
+    book. No figure may cross from one book into the other — not the money, not
+    the win rate, not the R sample, not the habit.
+    """
+    usd = make_market(client, "US book", "US", "USD")
+    egp = make_market(client, "Egypt book", "EGX", "EGP")
+    open_in(client, usd, "AAA")
+    close_in(client, usd, "AAA", "110")
+    open_in(client, egp, "SWDY")
+    close_in(client, egp, "SWDY", "95")
+
+    # No market named: the old behaviour, every market added together.
+    every = analytics(client)
+    assert every["money_scope"] is None
+    assert every["total_pnl"] == "500"
+    assert every["rated_trades"] == 2
+
+    dollar = scoped(client, usd)
+    assert dollar["money_scope"] == {
+        "portfolio_id": usd,
+        "name": "US book",
+        "currency": "USD",
+    }
+    assert (dollar["total_trades"], dollar["closed_trades"]) == (1, 1)
+    assert dollar["total_pnl"] == "1000"
+    assert (dollar["wins"], dollar["losses"], dollar["breakeven"]) == (1, 0, 0)
+    assert dollar["win_rate"] == 1.0
+    assert [p["symbol"] for p in dollar["equity_curve"]] == ["AAA"]
+    assert dollar["monthly"][0]["pnl"] == "1000"
+    assert dollar["max_drawdown"] == "0"
+    # The R statistics are this book's too, or a market with no trades would
+    # still show the other book's expectancy.
+    assert dollar["rated_trades"] == 1
+    assert dollar["expectancy_r"] == "2"
+    assert dollar["win_rate_r"] == 1.0
+    # The habit counts this book's notes: the open and the close.
+    assert dollar["notes_total"] == 2
+    assert dollar["note_streak_days"] == 1
+
+    egypt = scoped(client, egp)
+    assert egypt["money_scope"]["currency"] == "EGP"
+    assert egypt["total_pnl"] == "-500"
+    assert [p["symbol"] for p in egypt["equity_curve"]] == ["SWDY"]
+    assert egypt["rated_trades"] == 1
+    assert egypt["expectancy_r"] == "-1"
+    assert egypt["notes_total"] == 2
+
+
+def test_a_market_with_no_trades_shows_nothing_from_another_market(client):
+    """The failure this scope exists to prevent: an empty book wearing the other
+    book's numbers."""
+    usd = make_market(client, "US book", "US", "USD")
+    open_in(client, usd, "AAA")
+    close_in(client, usd, "AAA", "110")
+    empty = make_market(client, "Empty book", "EGX", "EGP")
+
+    view = scoped(client, empty)
+
+    assert view["money_scope"]["currency"] == "EGP"
+    for key in (
+        "total_trades",
+        "open_trades",
+        "closed_trades",
+        "wins",
+        "losses",
+        "breakeven",
+        "rated_trades",
+        "unrated_trades",
+        "unpriced_trades",
+        "beyond_stop",
+        "notes_total",
+        "notes_voice",
+        "notes_typed",
+        "observation_notes",
+        "note_streak_days",
+    ):
+        assert view[key] == 0, key
+    for key in (
+        "win_rate",
+        "win_rate_r",
+        "expectancy_r",
+        "total_pnl",
+        "average_pnl",
+        "best_pnl",
+        "worst_pnl",
+        "profit_factor",
+        "max_drawdown",
+        "average_r",
+        "best_r",
+        "worst_r",
+        "average_win_r",
+        "average_loss_r",
+    ):
+        assert view[key] is None, key
+    assert view["equity_curve"] == []
+    assert view["monthly"] == []
+    assert all(bucket["count"] == 0 for bucket in view["r_distribution"])
+    assert view["prediction_accuracy"]["judged"] == 0
+    assert all(week["notes"] == 0 for week in view["notes_per_week"])
+
+
+def test_a_market_that_is_not_yours_is_not_found(client):
+    theirs = make_market(client, "Their book", "US", "USD", sub="user_b")
+
+    resp = client.get("/analytics", headers=auth_headers(), params={"portfolio_id": theirs})
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "Market not found"
+
+
+def test_the_left_out_reasons_add_up_to_the_sample(client):
+    """Every closed trade is either rated, or left out for exactly one reason."""
+    close_a_trade(client, "AAA", "110", **AT_PAR)  # rated: +2R
+
+    open_in(client, ensure_market(client), "BBB", stop=None)  # priced, no stop
+    close_in(client, ensure_market(client), "BBB", "110")
+
+    open_a_trade(client, symbol="CCC", **AT_PAR)  # stop, no exit price
+    set_proposal(client, proposal([{"kind": "CLOSE"}], symbol="CCC"))
+    note = record_text(client, "I am out of CCC")
+    assert approve(client, note["id"]).status_code == 200
+
+    view = analytics(client)
+
+    assert view["closed_trades"] == 3
+    assert view["rated_trades"] == 1
+    assert view["unrated_trades"] == 2
+    assert view["unpriced_trades"] == 1  # CCC sold with no price
+    assert view["unrated_no_stop"] == 1  # BBB: a priced exit, no stop
+    assert view["unrated_no_risk"] == 0
+    assert (
+        view["unrated_no_stop"] + view["unrated_no_risk"] + view["unpriced_trades"]
+        == view["unrated_trades"]
+    )
+    # The money still counts BBB: a missing stop costs it its R, not its P&L.
+    assert view["total_pnl"] == "2000"
