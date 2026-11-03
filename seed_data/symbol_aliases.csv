@@ -49,6 +49,7 @@ ACAD,acadia pharmaceuticals
 ACCL,acco group holdings
 ACCO,acco brands
 ACCS,access newswire
+ACCV,accelevation holdings
 ACDC,profrac
 ACDC,profrac holding
 ACEL,accel entertainment
@@ -1402,7 +1403,6 @@ COHR,coherent
 COIN,coinbase
 COIN,coinbase global
 COKE,coca-cola consolidated
-COLA,columbus acquisition
 COLB,columbia banking
 COLB,columbia banking system
 COLD,americold realty
@@ -1908,6 +1908,7 @@ EG,everest
 EG,everest group
 EGAL,egypt aluminum
 EGAN,egain
+EGAS,european natural gas etp
 EGBE,egyptian gulf bank
 EGBN,eagle ban
 EGBN,eagle bancorp
@@ -2209,9 +2210,11 @@ FFBC,first financial ban
 FFBC,first financial bancorp
 FFIN,first financial bankshares
 FFIV,f5 networks
+FFR,ff eai robotics ecosystem
 FG,f&g annuities
 FG,f&g annuities & life
 FGBI,first guaranty bancshares
+FGC,fg communities holdings
 FGI,fgi industries
 FGII,fg imperii acquisition
 FGL,founder group
@@ -2340,8 +2343,6 @@ FRVO,fervo energy
 FSBC,five star ban
 FSBC,five star bancorp
 FSBW,fs bancorp
-FSEA,first seacoast ban
-FSEA,first seacoast bancorp
 FSHP,flag ship acquisition
 FSI,flexible solutions international
 FSK,fs kkr capital
@@ -3129,6 +3130,7 @@ ITRM,iterum
 ITRM,iterum therapeutics
 ITRN,ituran location and control
 ITW,illinois tool works
+IVAI,ives ultra ai opportunities
 IVDA,iveda solutions
 IVF,invo fertility
 IVR,invesco mortgage capital
@@ -4182,8 +4184,6 @@ NSPR,inspiremd
 NSRX,nasus
 NSRX,nasus pharma
 NSSC,napco security technologies
-NSTS,nsts ban
-NSTS,nsts bancorp
 NSYS,nortech systems
 NTAP,netapp
 NTB,bank of n.t. butterfield & son
@@ -4384,6 +4384,7 @@ OPHC,optimumbank
 OPHC,optimumbank holdings
 OPK,opko health
 OPLN,openlane
+OPNW,openworld
 OPRA,opera
 OPRT,oportun financial
 OPRX,optimizerx
@@ -5122,6 +5123,7 @@ RYN,rayonier
 RYOJ,ryojbaba common shares
 RYTM,rhythm pharmaceuticals
 RYZ,ryerson holding
+RZAI,roze ai - common shares
 RZLT,rezolute
 RZLV,rezolve ai
 S,sentinelone
@@ -5141,6 +5143,7 @@ SAH,sonic automotive
 SAIC,science applications international
 SAIH,saiheat
 SAIL,sailpoint
+SAIQ,wisesat.space holdings
 SAJ,saratoga investment 8.00% notes due 2027
 SAM,boston beer
 SAMG,silvercrest asset management
@@ -6191,6 +6194,7 @@ VVV,valvoline
 VWAV,visionwave holdings
 VXRT,vaxart
 VYGR,voyager therapeutics
+VYLR,vylor
 VYX,ncr voyix
 VZ,verizon
 VZ,verizon communications

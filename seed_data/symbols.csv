@@ -64,6 +64,7 @@ EGX,EEII,El Arabia Engineering Industries,EGX,EGS3G111C015,el arabia engineering
 EGX,EFIC,Egyptian Financial & Industrial,EGX,EGS38381C017,egyptian financial & industrial
 EGX,EFID,Edita Food Industries S.A.E,EGX,EGS305I1C011,edita food industries s.a.e
 EGX,EGAL,Egypt Aluminum,EGX,EGS3E181C010,egypt aluminum
+EGX,EGAS,Natural Gas & Mining Project (Egypt Gas),EGX,EGS39011C,natural gas & mining project (egypt gas)
 EGX,EGBE,Egyptian Gulf Bank,EGX,EGS60182C010,egyptian gulf bank
 EGX,EGCH,Egyptian Chemical Industries (Kima),EGX,EGS38201C017,egyptian chemical industries (kima)
 EGX,EGSA,Egyptian Satellites (NileSat),EGX,EGS48022C015,egyptian satellites (nilesat)
@@ -240,6 +241,7 @@ US,ABVE,Above Food Ingredients Inc. Common Stock,NASDAQ,CA00373V1004,above food 
 US,ABVX,Abivax SA,NASDAQ,US00370M1036,
 US,ACAD,ACADIA Pharmaceuticals Inc,NASDAQ,US0042251084,acadia pharmaceuticals|acadia
 US,ACCL,Acco Group Holdings Limited Ordinary Shares,NASDAQ,,acco group holdings
+US,ACCV,Accelevation Holdings Corp. - Class A ordinary shares,NASDAQ,,accelevation holdings
 US,ACDC,ProFrac Holding Corp.,NASDAQ,US74319N1000,profrac holding|profrac
 US,ACET,Adicet Bio Inc,NASDAQ,US0070021086,
 US,ACFN,"Acorn Energy, Inc.",NASDAQ,US0048482063,acorn energy
@@ -917,7 +919,6 @@ US,COGT,Cogent Biosciences Inc,NASDAQ,US19240Q2012,cogent biosciences|cogent
 US,COHU,Cohu Inc,NASDAQ,US1925761066,
 US,COIN,Coinbase Global Inc,NASDAQ,US19260Q1076,coinbase global|coinbase
 US,COKE,Coca-Cola Consolidated Inc.,NASDAQ,US1910981026,coca-cola consolidated
-US,COLA,Columbus Acquisition Corp Ordinary Shares,NASDAQ,KYG2295P1072,columbus acquisition
 US,COLB,Columbia Banking System Inc,NASDAQ,US1972361026,columbia banking system|columbia banking
 US,COLL,Collegium Pharmaceutical Inc,NASDAQ,US19459J1043,collegium pharmaceutical|collegium
 US,COLM,Columbia Sportswear Company,NASDAQ,US1985161066,columbia sportswear
@@ -1286,7 +1287,9 @@ US,FFAI,Faraday Future Intelligent Electric Inc.,NASDAQ,US3073598852,faraday fut
 US,FFBC,First Financial Bancorp,NASDAQ,US3202091092,first financial bancorp|first financial ban
 US,FFIN,First Financial Bankshares Inc,NASDAQ,US32020R1095,first financial bankshares
 US,FFIV,F5 Networks Inc,NASDAQ,US3156161024,f5 networks
+US,FFR,FF EAI Robotics Ecosystem Inc. - Common Stock,NASDAQ,,ff eai robotics ecosystem
 US,FGBI,First Guaranty Bancshares Inc,NASDAQ,US32043P1066,first guaranty bancshares
+US,FGC,FG Communities Holdings Inc. - Common Stock,NASDAQ,,fg communities holdings
 US,FGI,FGI Industries Ltd,NASDAQ,KYG3302D2024,fgi industries
 US,FGII,FG Imperii Acquisition Corp. Class A Ordinary Shares,NASDAQ,KYG3R41C1020,fg imperii acquisition
 US,FGL,Founder Group Limited Ordinary Shares,NASDAQ,VGG3662E1218,founder group
@@ -1366,7 +1369,6 @@ US,FRTT,Fort Technology Inc.,NASDAQ,CA3490243076,fort technology
 US,FRVO,Fervo Energy Company,NASDAQ,US31556C1062,fervo energy
 US,FSBC,Five Star Bancorp,NASDAQ,US33830T1034,five star bancorp|five star ban
 US,FSBW,FS Bancorp Inc,NASDAQ,US30263Y1047,fs bancorp
-US,FSEA,First Seacoast Bancorp,NASDAQ,US33631F1049,first seacoast bancorp|first seacoast ban
 US,FSHP,Flag Ship Acquisition Corp. Ordinary Shares,NASDAQ,KYG3530C1096,flag ship acquisition
 US,FSLR,First Solar Inc,NASDAQ,US3364331070,first solar
 US,FSLY,"Fastly, Inc.",NASDAQ,US31188V1008,fastly
@@ -2327,7 +2329,6 @@ US,NSIT,Insight Enterprises Inc,NASDAQ,US45765U1034,insight enterprises
 US,NSLR,Neostellar Capital Corp.,NASDAQ,US86887Q1094,neostellar capital
 US,NSPR,InspireMD Inc,NASDAQ,US45779A8466,inspiremd
 US,NSSC,NAPCO Security Technologies Inc,NASDAQ,US6304021057,napco security technologies
-US,NSTS,NSTS Bancorp Inc,NASDAQ,US6293JP1094,nsts bancorp|nsts ban
 US,NSYS,Nortech Systems Incorporated,NASDAQ,US6565531042,nortech systems
 US,NTAP,NetApp Inc,NASDAQ,US64110D1046,netapp
 US,NTCL,NETCLASS TECHNOLOGY INC Class A Ordinary Shares,NASDAQ,KYG6427C1087,netclass technology|netclass
@@ -2444,6 +2445,7 @@ US,OPBK,OP Bancorp,NASDAQ,US67109R1095,op bancorp|op ban
 US,OPCH,Option Care Health Inc,NASDAQ,US68404L2016,option care health
 US,OPEN,Opendoor Technologies Inc,NASDAQ,US6837121036,opendoor technologies
 US,OPK,Opko Health Inc,NASDAQ,US68375N1037,opko health
+US,OPNW,"OpenWorld, Inc. - Common Stock",NASDAQ,,openworld
 US,OPRA,Opera Ltd,NASDAQ,US68373M1071,opera
 US,OPRT,Oportun Financial Corp,NASDAQ,US68376D1046,oportun financial
 US,OPRX,OPTIMIZERx Corp,NASDAQ,US68401U2042,optimizerx
@@ -2848,6 +2850,7 @@ US,RYET,Ruanyun Edai Technology Inc. Ordinary shares,NASDAQ,KYG7710T1058,ruanyun
 US,RYM,"RYTHM, Inc.",NASDAQ,US00853E4044,rythm
 US,RYOJ,"rYojbaba Co., Ltd. Common Shares",NASDAQ,JP3976100002,ryojbaba common shares
 US,RYTM,Rhythm Pharmaceuticals Inc,NASDAQ,US76243J1051,rhythm pharmaceuticals
+US,RZAI,Roze AI Inc. - Common Shares,NASDAQ,,roze ai - common shares
 US,RZLT,Rezolute Inc,NASDAQ,US76200L3096,rezolute
 US,RZLV,Rezolve AI Limited Ordinary Shares,NASDAQ,GB00BQH8G337,rezolve ai
 US,SAAQ,Space Asset Acquisition Corp. Class A Ordinary Shares,NASDAQ,KYG8375S1012,space asset acquisition
@@ -2860,6 +2863,7 @@ US,SAIA,Saia Inc,NASDAQ,US78709Y1055,
 US,SAIC,Science Applications International Corporation Common Stock,NASDAQ,US8086251076,science applications international
 US,SAIH,SAIHEAT Limited,NASDAQ,KYG7852T2021,saiheat
 US,SAIL,"SailPoint, Inc. Common Stock",NASDAQ,US78781J1097,sailpoint
+US,SAIQ,WISeSat.Space Holdings Corp. - Ordinary Shares,NASDAQ,,wisesat.space holdings
 US,SAMG,Silvercrest Asset Management Group Inc,NASDAQ,US8283591092,silvercrest asset management group|silvercrest asset management
 US,SANA,Sana Biotechnology Inc,NASDAQ,US7995661045,sana biotechnology
 US,SANM,Sanmina Corporation,NASDAQ,US8010561020,sanmina
@@ -3668,6 +3672,7 @@ US,AMTB,Amerant Bancorp Inc.,NYSE,US0235761014,amerant bancorp|amerant ban|amera
 US,AMTD,AMTD IDEA Group,NYSE,US00180G2057,amtd idea group|amtd idea
 US,AMTM,Amentum Holdings Inc.,NYSE,US0239391016,amentum holdings|amentum
 US,AMWL,American Well Corp,NYSE,US03044L2043,american well
+US,AMZE,Amaze Holdings Inc,NYSE,US35804X2009,amaze holdings|amaze
 US,AN,AutoNation Inc,NYSE,US05329W1027,autonation
 US,ANDG,Andersen Group Inc.,NYSE,US0338531025,andersen group|andersen
 US,ANET,Arista Networks,NYSE,US0404132054,arista networks|arista
@@ -4428,6 +4433,7 @@ US,IT,Gartner Inc,NYSE,US3666511072,gartner
 US,ITGR,Integer Holdings Corp,NYSE,US45826H1095,integer holdings|integer
 US,ITT,ITT Inc,NYSE,US45073V1089,
 US,ITW,Illinois Tool Works Inc,NYSE,US4523081093,illinois tool works
+US,IVAI,Ives Ultra AI Opportunities Inc. Common Stock,NYSE,,ives ultra ai opportunities
 US,IVR,Invesco Mortgage Capital Inc,NYSE,US46131B7047,invesco mortgage capital
 US,IVT,Inventrust Properties Corp,NYSE,US46124J2015,inventrust properties
 US,IVZ,Invesco Ltd.,NYSE,BMG491BT1088,invesco
@@ -5272,6 +5278,7 @@ US,VTR,Ventas Inc,NYSE,US92276F1003,ventas
 US,VTS,Vitesse Energy Inc,NYSE,US92852X1037,vitesse energy
 US,VVV,Valvoline Inc,NYSE,US92047W1018,valvoline
 US,VVX,V2X Inc,NYSE,US92242T1016,
+US,VYLR,Vylor Inc. Common Stock,NYSE,,vylor
 US,VYX,NCR Voyix Corporation,NYSE,US62886E1082,ncr voyix
 US,VZ,Verizon Communications Inc,NYSE,US92343V1044,verizon communications|verizon
 US,W,Wayfair Inc,NYSE,US94419L1017,wayfair
@@ -5376,7 +5383,6 @@ US,AIM,AIM ImmunoTech Inc,NYSE MKT,US00901B3033,
 US,AIRI,Air Industries Group,NYSE MKT,US00912N4034,air industries group|air industries
 US,AMBO,Ambow Education Holding Ltd,NYSE MKT,US02322P3091,ambow education holding|ambow education
 US,AMS,American Shared Hospital Service,NYSE MKT,US0295951059,american shared hospital service|american shared hospital
-US,AMZE,Amaze Holdings Inc,NYSE MKT,US35804X2009,amaze holdings|amaze
 US,APT,Alpha Pro Tech Ltd,NYSE MKT,US0207721095,alpha pro tech
 US,APUS,"Apimeds Pharmaceuticals US, Inc.",NYSE MKT,US03771D1028,apimeds pharmaceuticals us
 US,ARMP,Armata Pharmaceuticals Inc,NYSE MKT,US04216R1023,armata pharmaceuticals|armata

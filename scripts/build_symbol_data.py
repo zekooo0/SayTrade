@@ -36,9 +36,18 @@ US_VENUES = {"NASDAQ", "NYSE", "NYSE ARCA", "NYSE MKT", "BATS"}
 
 # "COMI.CA EGS60121C018 Commercial International Bank (Egypt)" — the Reuters
 # code, the ISIN, then the name, which runs until the next entry begins.
+#
+# Two shapes appear in the extraction, so both must match. Most rows are
+# "COMI.CA EGS60121C018 Name", but some are glued with the ISIN truncated:
+# "EGAS.CAEGS39011C Natural Gas & Mining Project (Egypt Gas)". That single row
+# was silently dropped while the pattern demanded whitespace and 10+ ISIN
+# characters, so the separators are `\s*` and the ISIN is allowed to be short.
+# The lookahead is relaxed the same way, or a row following a glued one would
+# not terminate. Verified by count: the PDF lists 215 tickers and the parser
+# must keep all 215.
 EGX_ROW = re.compile(
-    r"([A-Z][A-Z0-9]{1,6})\.CA\.?\s+(EG[A-Z0-9]{8,14})\s+(.+?)"
-    r"(?=\s+[A-Z][A-Z0-9]{1,6}\.CA\.?\s+EG|\Z)",
+    r"([A-Z][A-Z0-9]{1,6})\.CA\.?\s*(EG[A-Z0-9]{5,14})\s+(.+?)"
+    r"(?=\s+[A-Z][A-Z0-9]{1,6}\.CA\.?\s*EG|\Z)",
     re.S,
 )
 
