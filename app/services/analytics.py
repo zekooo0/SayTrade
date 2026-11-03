@@ -306,7 +306,10 @@ async def _habit(
     notes = list(await session.scalars(query))
     view.notes_total = len(notes)
     view.notes_voice = sum(1 for n in notes if n.source == "VOICE")
-    view.notes_typed = view.notes_total - view.notes_voice
+    view.notes_image = sum(1 for n in notes if n.source == "IMAGE")
+    # Counted, not subtracted: IMAGE is its own source, and folding it into
+    # "typed" would put screenshots under a word that means something else.
+    view.notes_typed = sum(1 for n in notes if n.source == "TEXT")
 
     changed_ids = set(
         await session.scalars(

@@ -323,6 +323,7 @@ class AnalyticsView(BaseModel):
     notes_total: int = 0
     notes_voice: int = 0
     notes_typed: int = 0
+    notes_image: int = 0
     observation_notes: int = 0
     note_streak_days: int = 0
     notes_per_week: list[WeekBucket] = Field(default_factory=list)

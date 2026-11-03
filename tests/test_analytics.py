@@ -11,8 +11,10 @@ The workhorse trade: 100 shares entered at 100 with a stop at 95, so one R is
 from conftest import (
     approve,
     auth_headers,
+    drain,
     ensure_market,
     open_a_trade,
+    post_image,
     proposal,
     record_text,
     set_proposal,
@@ -195,6 +197,7 @@ def test_the_habit_counts_notes_weeks_and_the_streak(client):
     assert view["notes_total"] == 3
     assert view["notes_typed"] == 3
     assert view["notes_voice"] == 0
+    assert view["notes_image"] == 0
     assert view["observation_notes"] == 1  # the one with no change rows
     assert view["note_streak_days"] == 1  # all three are today
 
@@ -202,6 +205,22 @@ def test_the_habit_counts_notes_weeks_and_the_streak(client):
     assert len(weeks) == 12
     assert weeks[-1]["notes"] == 3  # this week
     assert sum(w["notes"] for w in weeks[:-1]) == 0
+
+
+def test_a_screenshot_is_an_image_note_not_a_typed_one(client):
+    """The habit line names three sources. A picture read by the model belongs to
+    the image count; folding it into "typed" would describe something the trader
+    never typed."""
+    posted = post_image(client)
+    assert posted.status_code == 201, posted.text
+    drain(client, posted.json()["id"])
+
+    view = analytics(client)
+
+    assert view["notes_total"] == 1
+    assert view["notes_image"] == 1
+    assert view["notes_typed"] == 0
+    assert view["notes_voice"] == 0
 
 
 def test_the_scoreboard_is_scoped_to_the_trader(client):
@@ -336,6 +355,7 @@ def test_a_market_with_no_trades_shows_nothing_from_another_market(client):
         "notes_total",
         "notes_voice",
         "notes_typed",
+        "notes_image",
         "observation_notes",
         "note_streak_days",
     ):

@@ -124,6 +124,31 @@ def test_approval_is_idempotent(client):
     assert len(stops) == 1                     # applied once, not twice
 
 
+def test_a_replayed_approval_does_not_rewrite_the_stored_proposal(client):
+    """The proposal is the note's history once it is approved. A replay that
+    carries an edited draft must not replace the record of what was applied."""
+    opened = open_a_trade(client)
+    set_proposal(client, proposal([{"kind": "STOP", "stop": "9.5"}], summary="Stop to 9.5."))
+    note = record_text(client, "moved the stop to 9.5", trade_id=opened["id"])
+    assert approve(client, note["id"]).status_code == 200
+
+    edited = proposal([{"kind": "TARGET", "target": "50"}], summary="Target to 50.")
+    replay = client.post(
+        f"/notes/{note['id']}/approve",
+        headers=auth_headers(),
+        json={"proposal": edited},
+    )
+    assert replay.status_code == 200, replay.text
+
+    stored = get_note(client, note["id"])
+    assert [c["kind"] for c in stored["proposal"]["changes"]] == ["STOP"]
+    assert stored["proposal"]["changes"][0]["stop"] == "9.5"
+
+    detail = trade(client, opened["id"])
+    kinds = [c["kind"] for n in detail["notes"] for c in n["changes"]]
+    assert "TARGET" not in kinds               # never applied, so never recorded
+
+
 def test_approve_requires_an_extracted_note(client):
     resp = post_text(client, "not processed yet")
     note_id = resp.json()["id"]

@@ -44,8 +44,25 @@ def _raise_http(exc: DomainError) -> NoReturn:
     raise HTTPException(status_code=exc.status_code, detail=exc.message)
 
 
+def _refuse_before_reading(file: UploadFile, limit: int, noun: str) -> None:
+    """Refuse an oversized upload before its bytes are pulled into memory.
+
+    Starlette has already spooled the body by the time a handler runs, and
+    ``file.size`` is the real byte count it wrote. Checking it here keeps a large
+    recording or screenshot from being copied into a second in-memory buffer just
+    to be refused; the post-read check below stays as the fallback for an
+    upload whose size Starlette did not report.
+    """
+    if file.size is not None and file.size > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=f"The {noun} is too large (limit {limit // (1024 * 1024)} MB).",
+        )
+
+
 async def _read_audio(request: Request, file: UploadFile) -> tuple[bytes, str]:
     settings = request.app.state.settings
+    _refuse_before_reading(file, settings.max_audio_bytes, "recording")
     data = await file.read()
     mime_type = (file.content_type or "").split(";")[0].strip().lower()
     if mime_type not in settings.allowed_audio_mime_types:
@@ -115,6 +132,7 @@ async def receive_voice(
 
 async def _read_image(request: Request, file: UploadFile) -> tuple[bytes, str]:
     settings = request.app.state.settings
+    _refuse_before_reading(file, settings.max_image_bytes, "image")
     data = await file.read()
     mime_type = (file.content_type or "").split(";")[0].strip().lower()
     if mime_type not in settings.allowed_image_mime_types:
@@ -296,7 +314,14 @@ async def approve_note(
     """
     try:
         note = await journal_service.get_note(session, user, note_id)
-        if payload is not None and payload.proposal is not None:
+        # The stored proposal is the note's history once it is approved. A
+        # second approval is a replay: it must not rewrite what the trader
+        # reviewed, or the note would describe changes that were never applied.
+        if (
+            payload is not None
+            and payload.proposal is not None
+            and note.status != note_service.STATUS_APPROVED
+        ):
             note.proposal = payload.proposal.model_dump(mode="json", exclude_none=False)
         result = await note_service.apply_note(
             session,
