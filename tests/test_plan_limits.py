@@ -1,5 +1,6 @@
-"""The plan: three active trades on Free, unlimited on Pro, plus the monthly
-voice guard that stops one account burning unlimited AI spend."""
+"""The plan: a small active-trade limit on Free (three in this suite, ten in
+production), unlimited on Pro, plus the monthly voice guard that stops one
+account burning unlimited AI spend."""
 
 from conftest import (
     approve,
@@ -16,6 +17,16 @@ from conftest import (
     set_proposal,
     trade,
 )
+
+
+def test_the_free_plan_defaults_to_ten_active_trades():
+    """The production default, independent of the fixture's small limit: the
+    suite pins three so it does not open ten trades to reach the boundary."""
+    from app.billing.entitlements import PLAN_FREE, Entitlements
+    from app.config import Settings
+
+    assert Settings.model_fields["free_active_trades"].default == 10
+    assert Entitlements().limits[PLAN_FREE].active_trades == 10
 
 
 def test_a_new_account_starts_on_free(client):

@@ -47,9 +47,9 @@ CREATE TABLE public.users (
 One row per Clerk identity. The backend verifies the Clerk JWT against the
 instance JWKS on every request and never trusts a client-supplied user id.
 
-`plan` is **stored**, not derived: there is no checkout yet, so an operator
-switches it by hand. Free holds **3 active trades**; Pro ($5 USD a month) lifts
-the limit to unlimited. The limit is enforced only where a trade would be
+`plan` is **stored**, not derived: the payment webhook writes it, and an
+operator can switch it by hand. Free holds **10 active trades**; Pro lifts the
+limit to unlimited. The limit is enforced only where a trade would be
 **created** — a follow-up note on a trade the trader already holds is never
 blocked, and a refused note approves the moment a slot frees up. The monthly AI
 voice cap (100) is an abuse guard, not the product limit, and typed notes never

@@ -23,7 +23,9 @@ os.environ.setdefault(
     "postgresql+asyncpg://saytrade:saytrade@127.0.0.1:5432/saytrade_test",
 )
 os.environ.setdefault("CLERK_FRONTEND_API", "https://test.clerk.accounts.dev")
-# Exhaust the monthly voice guard quickly in tests; keep the real trade limit.
+# Exhaust the monthly voice guard quickly in tests, and use a small trade limit
+# so the suite opens three trades instead of ten. The production default (10) is
+# pinned in test_plan_limits.
 os.environ.setdefault("FREE_VOICE_NOTES_PER_MONTH", "2")
 # The payments switch is PINNED, never inherited: a developer's rehearsal .env
 # carries LEMONSQUEEZY_TEST_MODE=true, and the checkout route would then mint a

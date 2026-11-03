@@ -51,7 +51,7 @@ def month_period(now: datetime) -> tuple[datetime, datetime]:
 class Entitlements:
     def __init__(
         self,
-        free_active_trades: int = 3,
+        free_active_trades: int = 10,
         free_voice_notes_per_month: int | None = 100,
         pro_active_trades: int | None = None,
         pro_voice_notes_per_month: int | None = None,

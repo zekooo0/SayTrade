@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     # monthly cap on AI voice notes (an abuse guard, not a product limit).
     # Pro lifts the trade limit, and a trader reaches it through the payment
     # provider below.
-    free_active_trades: int = 3
+    free_active_trades: int = 10
     free_voice_notes_per_month: int = 100
     # None means unlimited.
     pro_active_trades: int | None = None
