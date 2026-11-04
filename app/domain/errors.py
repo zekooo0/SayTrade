@@ -71,6 +71,17 @@ class MarketRequiredError(DomainError):
     status_code = 422
 
 
+class UnsupportedMarketError(DomainError):
+    """422: the market is not one this product trades.
+
+    SayTrade offers the Egyptian Exchange (EGX) and the US market, and nothing
+    else. The rule lives in the service, so a hand-written request cannot create
+    a market whose symbols the app can never resolve.
+    """
+
+    status_code = 422
+
+
 class PositionViolationError(DomainError):
     """422: a sale exceeds the shares held, or a change makes no sense."""
 

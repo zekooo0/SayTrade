@@ -15,11 +15,13 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.errors import PortfolioNotFoundError
+from app.domain.errors import PortfolioNotFoundError, UnsupportedMarketError
 from app.models import Portfolio, Trade, User
 from app.schemas.api import PortfolioView
 
 # The markets the product offers, and the currency each one trades in.
+# This is the whole list: the UI offers these two and the service refuses
+# anything else, so a market whose symbols could never resolve cannot exist.
 EXCHANGE_CURRENCY = {"EGX": "EGP", "US": "USD"}
 MARKET_EXCHANGES = tuple(EXCHANGE_CURRENCY)
 
@@ -36,6 +38,26 @@ def exchange_for_currency(currency: str | None) -> str | None:
         if code == wanted:
             return exchange
     return None
+
+
+def supported_exchange(
+    *, exchange: str | None = None, currency: str | None = None
+) -> str:
+    """The market's exchange, or 422 if this product does not trade it.
+
+    Either field can name the market: a client that sends ``exchange`` is the
+    current shape, and one that only sends ``currency`` (the older app) still
+    resolves to the same two markets. Nothing else is accepted — the symbols are
+    loaded per exchange, so a third market would be a book with no tickers.
+    """
+    code = (exchange or "").strip().upper()
+    if not code and currency:
+        code = exchange_for_currency(currency) or ""
+    if code not in EXCHANGE_CURRENCY:
+        raise UnsupportedMarketError(
+            "SayTrade offers the Egyptian Exchange (EGX) and the US market only."
+        )
+    return code
 
 
 def portfolio_view(portfolio: Portfolio, trade_count: int = 0) -> PortfolioView:
@@ -98,12 +120,12 @@ async def create_portfolio(
     The exchange is the choice; the currency is its consequence. A caller that
     only knows the currency (an older client) still gets a usable market.
     """
-    exchange = (exchange or "").strip().upper() or exchange_for_currency(currency)
+    exchange = supported_exchange(exchange=exchange, currency=currency)
     portfolio = Portfolio(
         user_id=user.id,
         name=name.strip(),
         exchange=exchange,
-        currency=currency_for(exchange) or (currency or None),
+        currency=currency_for(exchange),
     )
     session.add(portfolio)
     await session.commit()
@@ -130,15 +152,11 @@ async def update_portfolio(
     if name is not None:
         portfolio.name = name.strip()
     if exchange is not None:
-        portfolio.exchange = exchange.strip().upper() or None
-        derived = currency_for(portfolio.exchange)
-        if derived:
-            portfolio.currency = derived
+        portfolio.exchange = supported_exchange(exchange=exchange)
+        portfolio.currency = currency_for(portfolio.exchange)
     elif currency is not None:
-        portfolio.currency = currency.strip().upper() or None
-        derived = exchange_for_currency(portfolio.currency)
-        if derived:
-            portfolio.exchange = derived
+        portfolio.exchange = supported_exchange(currency=currency)
+        portfolio.currency = currency_for(portfolio.exchange)
     if clear_capital:
         portfolio.capital = None
     elif capital is not None:

@@ -41,6 +41,47 @@ def test_a_new_trader_has_no_portfolios(client):
     assert client.get("/portfolios", headers=auth_headers()).json() == []
 
 
+def test_only_the_egyptian_and_us_markets_can_be_created(client):
+    """The product trades EGX and US only: a market's symbols are loaded per
+    exchange, so a third one would be a book nothing can ever resolve."""
+    egx = client.post(
+        "/portfolios",
+        headers=auth_headers(),
+        json={"name": "Egypt", "exchange": "EGX"},
+    ).json()
+    assert (egx["exchange"], egx["currency"]) == ("EGX", "EGP")
+
+    us = client.post(
+        "/portfolios",
+        headers=auth_headers(),
+        json={"name": "US", "exchange": "US"},
+    ).json()
+    assert (us["exchange"], us["currency"]) == ("US", "USD")
+
+    for body in (
+        {"name": "London", "exchange": "LSE"},
+        {"name": "Tokyo", "currency": "JPY"},
+        {"name": "Nowhere", "exchange": ""},
+    ):
+        refused = client.post("/portfolios", headers=auth_headers(), json=body)
+        assert refused.status_code == 422, refused.text
+        assert "EGX" in refused.json()["detail"]
+        assert "US" in refused.json()["detail"]
+
+
+def test_a_market_cannot_be_changed_to_an_unsupported_exchange(client):
+    body = make_portfolio(client)
+
+    for patch in ({"exchange": "NASDAQ"}, {"currency": "EUR"}):
+        refused = client.patch(
+            f"/portfolios/{body['id']}", headers=auth_headers(), json=patch
+        )
+        assert refused.status_code == 422, refused.text
+
+    unchanged = client.get("/portfolios", headers=auth_headers()).json()[0]
+    assert (unchanged["exchange"], unchanged["currency"]) == ("EGX", "EGP")
+
+
 def test_a_portfolio_holds_its_own_currency_and_capital(client):
     body = make_portfolio(client, capital="100000")
 
