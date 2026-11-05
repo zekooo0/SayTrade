@@ -69,6 +69,20 @@ def test_only_the_egyptian_and_us_markets_can_be_created(client):
         assert "US" in refused.json()["detail"]
 
 
+def test_a_market_can_be_created_with_its_capital(client):
+    """The new-market dialog asks for the money in the same request: one trip,
+    and the exposure block has a number from the first trade."""
+    resp = client.post(
+        "/portfolios",
+        headers=auth_headers(),
+        json={"name": "Egypt", "exchange": "EGX", "capital": "250000"},
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert (body["exchange"], body["currency"]) == ("EGX", "EGP")
+    assert Decimal(body["capital"]) == Decimal("250000")
+
+
 def test_a_market_cannot_be_changed_to_an_unsupported_exchange(client):
     body = make_portfolio(client)
 

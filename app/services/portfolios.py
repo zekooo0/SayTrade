@@ -113,9 +113,10 @@ async def create_portfolio(
     name: str,
     currency: str | None = None,
     exchange: str | None = None,
+    capital: Decimal | None = None,
 ) -> PortfolioView:
-    """A new market. It starts with no capital and no trades, so nothing is
-    sized until the trader says how much money runs in it.
+    """A new market. It starts with no trades, and with whatever capital the
+    trader named in the same dialog.
 
     The exchange is the choice; the currency is its consequence. A caller that
     only knows the currency (an older client) still gets a usable market.
@@ -126,6 +127,7 @@ async def create_portfolio(
         name=name.strip(),
         exchange=exchange,
         currency=currency_for(exchange),
+        capital=capital,
     )
     session.add(portfolio)
     await session.commit()
