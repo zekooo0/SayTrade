@@ -62,7 +62,7 @@ Seven, all set. Secrets are marked `--secret` and cannot be read back:
 | Key | Kind |
 | --- | --- |
 | `DATABASE_URL` | secret — the Neon string from `.env.neon` |
-| `CLERK_FRONTEND_API` | plain |
+| `FIREBASE_PROJECT_ID` | plain — `saytrade-app` (the issuer is `https://securetoken.google.com/<id>`) |
 | `OPENAI_API_KEY` | secret |
 | `CLOUDINARY_CLOUD_NAME` | plain |
 | `CLOUDINARY_API_KEY` | secret |
@@ -106,7 +106,7 @@ cannot run at boot. Run it **from the machine** against Neon:
 cd backend/sayTrade
 NEON_URL=$(grep -m1 '^DATABASE_URL=' .env.neon | cut -d= -f2- | tr -d '"')
 DATABASE_URL="$NEON_URL" ./.venv/bin/alembic upgrade head
-DATABASE_URL="$NEON_URL" ./.venv/bin/alembic current      # expect b4e6d19a75c3 (head)
+DATABASE_URL="$NEON_URL" ./.venv/bin/alembic current      # expect d5e2c7a1b930 (head)
 ```
 
 `alembic/env.py` takes the URL from `settings.database_url`, and a real
@@ -150,14 +150,14 @@ out of step makes every API call answer 401:
 
 | Where | Key | Production value |
 | --- | --- | --- |
-| Vercel, Production | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_live_…` |
-| Vercel, Production | `CLERK_SECRET_KEY` | `sk_live_…` |
-| Vercel, Production | `NEXT_PUBLIC_CLERK_PROXY_URL` | `https://saytrade-web.vercel.app/__clerk/` |
-| FastAPI Cloud | `CLERK_FRONTEND_API` | `https://saytrade-web.vercel.app/__clerk` |
+| Vercel, Production | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | `pk_live_…` (the parked web journal only) |
+| Vercel, Production | `CLERK_SECRET_KEY` | `sk_live_…` (the parked web journal only) |
+| FastAPI Cloud | `FIREBASE_PROJECT_ID` | `saytrade-app` |
 
-The last two are the app proxy: the issuer of a proxied production instance is the
-proxy URL, not the `clerk.…` host. Read that value from Clerk's own discovery
-document rather than from memory — see section 4.
+The API is on Firebase now, so it needs no Clerk value at all. The two Vercel keys
+belong to the parked web journal and are unrelated to the API. A deployed API
+without `FIREBASE_PROJECT_ID` answers 503 on every authenticated route — set it
+before the deploy, not after.
 
 Then redeploy both halves — `NEXT_PUBLIC_*` is baked at build time:
 

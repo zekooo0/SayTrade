@@ -1,4 +1,4 @@
-"""User provisioning: Clerk subject -> internal user row."""
+"""User provisioning: verified auth subject -> internal user row."""
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -8,22 +8,25 @@ from app.billing import PLAN_FREE
 from app.models import User
 
 
-async def provision_user(session: AsyncSession, clerk_sub: str) -> User:
-    """Return the internal User for a verified Clerk subject, creating it on
-    first sight (just-in-time provisioning).
+async def provision_user(session: AsyncSession, auth_sub: str) -> User:
+    """Return the internal User for a verified subject, creating it on first
+    sight (just-in-time provisioning).
 
-    A new account starts on FREE. A plan is bought now (LemonSqueezy), so handing
-    out Pro at sign-up would give the paid plan away; an operator can still move
-    an account up by hand (`scripts/set_plan.py`).
+    The subject is the Firebase uid from the ID token's `sub` claim; it is the
+    only identity this app knows, and the backend never accepts one from a client.
 
-    The clerk_sub unique constraint resolves the first-sight race: the loser
-    of a concurrent insert reloads the winner's row.
+    A new account starts on FREE. A plan is bought now, so handing out Pro at
+    sign-up would give the paid plan away; an operator can still move an account
+    up by hand (`scripts/set_plan.py`).
+
+    The auth_sub unique constraint resolves the first-sight race: the loser of a
+    concurrent insert reloads the winner's row.
     """
-    user = await session.scalar(select(User).where(User.clerk_sub == clerk_sub))
+    user = await session.scalar(select(User).where(User.auth_sub == auth_sub))
     if user is not None:
         return user
 
-    user = User(clerk_sub=clerk_sub, plan=PLAN_FREE)
+    user = User(auth_sub=auth_sub, plan=PLAN_FREE)
     session.add(user)
     try:
         await session.flush()
@@ -31,7 +34,7 @@ async def provision_user(session: AsyncSession, clerk_sub: str) -> User:
         # The dependency session is otherwise untouched at this point, so a
         # rollback only discards the failed insert.
         await session.rollback()
-        user = await session.scalar(select(User).where(User.clerk_sub == clerk_sub))
+        user = await session.scalar(select(User).where(User.auth_sub == auth_sub))
         if user is None:  # pragma: no cover - impossible after IntegrityError
             raise
     return user

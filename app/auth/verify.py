@@ -1,4 +1,9 @@
-"""Clerk session-token verification (RS256 over the instance JWKS).
+"""Firebase ID-token verification (RS256 over Google's securetoken key set).
+
+A Firebase ID token is a plain RS256 JWT:
+`iss = https://securetoken.google.com/<project>`, `aud = <project>`, `sub` is the
+Firebase uid. Google publishes every project's signing keys at one URL, so the
+project is proven by issuer AND audience — never by the key.
 
 The signing key is reconstructed from the JWK (n, e) with cryptography —
 PyJWT 2.14 removed RSAAlgorithm.from_jwk, and its PyJWKSet is Fetch-oriented,
@@ -41,12 +46,11 @@ def key_for_kid(jwks: dict, kid: str):
     raise AuthError(f"no signing key found for kid '{kid}'")
 
 
-def verify_token(token: str, issuer: str, jwks: dict) -> dict:
-    """Verify signature, issuer, and validity window; return the claims.
+def verify_token(token: str, issuer: str, jwks: dict, audience: str | None = None) -> dict:
+    """Verify signature, issuer, audience and validity window; return the claims.
 
-    Clerk does not promise a stable `aud` across token generations, so the
-    audience is not checked — issuer + signature + expiry + sub presence are
-    the trust boundary.
+    `aud` is REQUIRED for Firebase: Google's key set signs every project's
+    tokens, so the audience is what proves the token was minted for THIS project.
     """
     try:
         header = jwt.get_unverified_header(token)
@@ -54,47 +58,49 @@ def verify_token(token: str, issuer: str, jwks: dict) -> dict:
         if not isinstance(kid, str):
             raise AuthError("token header has no 'kid'")
         key = key_for_kid(jwks, kid)
+        required = ["sub", "exp", "iss"] + (["aud"] if audience else [])
         claims = jwt.decode(
             token,
             key,
             algorithms=["RS256"],
             issuer=issuer,
-            options={"require": ["sub", "exp", "iss"]},
+            audience=audience if audience else None,
+            options={"require": required},
         )
     except AuthError:
         raise
     except jwt.PyJWTError as exc:
         raise AuthError(f"token verification failed: {exc}") from exc
+    if not claims.get("sub"):
+        # Google's rule, and the app's: a token with no subject identifies nobody.
+        raise AuthError("token has an empty subject")
     return claims
 
 
-def unverified_issuer(token: str) -> str | None:
-    """The token's `iss` claim, read WITHOUT checking the signature.
-
-    This is a LOOKUP KEY and nothing else: it selects which instance's key set
-    the token gets checked against. It is never trusted as a fact — a forged
-    `iss` merely points at a key set that the signature then fails against.
-
-    Needed because a domain move leaves two Clerk issuers alive at once: a token
-    minted on the old host and one minted on the new host are both legitimate,
-    and only the token itself says which is which.
-    """
+async def _fetch_jwks(fetcher, issuer: str, force: bool = False) -> dict:
     try:
-        claims = jwt.decode(token, options={"verify_signature": False})
-    except jwt.PyJWTError:
-        return None
-    issuer = claims.get("iss")
-    return issuer if isinstance(issuer, str) else None
-
-
-async def verify_clerk_token(token: str, fetcher, issuer: str) -> dict:
-    try:
-        jwks = await fetcher.get()
+        return await fetcher.get(force=True) if force else await fetcher.get()
     except httpx.HTTPError as exc:
-        # Clerk unreachable is an outage, not a bad token: say so, and leave the
+        # Google unreachable is an outage, not a bad token: say so, and leave the
         # trader signed in. A 401 here would throw away a good session.
-        logger.warning("Clerk JWKS unreachable at %s: %s", issuer, exc)
+        logger.warning("Firebase JWKS unreachable for %s: %s", issuer, exc)
         raise AuthUnavailableError(
             "Authentication is temporarily unavailable; try again in a moment"
         ) from exc
-    return verify_token(token, issuer, jwks)
+
+
+async def verify_firebase_token(token: str, fetcher, issuer: str, audience: str) -> dict:
+    """Verify a Firebase ID token, refetching the keys ONCE on an unknown kid.
+
+    Google rotates the securetoken keys, and the cached set can be hours old. An
+    unknown `kid` is either a forgery or a rotation; one forced refetch tells the
+    two apart without making every request pay a network round trip.
+    """
+    jwks = await _fetch_jwks(fetcher, issuer)
+    try:
+        return verify_token(token, issuer, jwks, audience)
+    except AuthError as exc:
+        if "no signing key" not in str(exc):
+            raise
+    jwks = await _fetch_jwks(fetcher, issuer, force=True)
+    return verify_token(token, issuer, jwks, audience)

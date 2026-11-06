@@ -11,10 +11,10 @@ class User(Base):
     """Application-level owner of trading records.
 
     The spec's users table is "the minimal contract required by the trading
-    schema". Authentication is outsourced to Clerk: the Clerk subject is kept
-    in `clerk_sub` (external IDs are not UUIDs, so they cannot be the PK), and
-    the internal `id` stays the FK target for the trading tables. Rows are
-    provisioned lazily on first verified request (just-in-time).
+    schema". Authentication is outsourced to Firebase: the ID token's subject
+    (the Firebase uid) is kept in `auth_sub` (external IDs are not UUIDs, so they
+    cannot be the PK), and the internal `id` stays the FK target for the trading
+    tables. Rows are provisioned lazily on first verified request (just-in-time).
     """
 
     __tablename__ = "users"
@@ -25,10 +25,10 @@ class User(Base):
         server_default=text("uuidv7()"),
     )
 
-    # Clerk user identifier ("user_..."), unique because one Clerk account maps
-    # to exactly one journal identity.
-    clerk_sub: Mapped[str] = mapped_column(
-        String(64), unique=True, nullable=False
+    # The verified subject: a Firebase uid. Unique, because one Firebase account
+    # maps to exactly one journal identity.
+    auth_sub: Mapped[str] = mapped_column(
+        String(128), unique=True, nullable=False
     )
 
     # The plan this account is on: FREE or PRO. Stored, not derived, so an

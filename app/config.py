@@ -17,21 +17,21 @@ class Settings(BaseSettings):
     # --- Postgres ---
     database_url: str = "postgresql+asyncpg://saytrade:saytrade@127.0.0.1:5432/saytrade"
 
-    # --- Clerk (auth) ---
-    # e.g. https://your-app.clerk.accounts.dev — also the JWT issuer.
-    clerk_frontend_api: str | None = None
+    # --- Firebase (auth) ---
+    # The Firebase project id, e.g. "saytrade-app". An ID token carries
+    # `iss = https://securetoken.google.com/<project>` and `aud = <project>`,
+    # so the project id is both the issuer's suffix and the audience.
+    firebase_project_id: str | None = None
 
     @property
-    def clerk_issuers(self) -> tuple[str, ...]:
-        """Every Clerk issuer a session token may carry.
+    def firebase_issuer(self) -> str | None:
+        project = (self.firebase_project_id or "").strip()
+        return f"https://securetoken.google.com/{project}" if project else None
 
-        One instance normally means one issuer. A domain move means two, for as
-        long as the old host is still in use: tokens minted there stay valid and
-        the API accepts both. Comma-separated in the environment, because that is
-        how the platform's env UI takes a list.
-        """
-        raw = self.clerk_frontend_api or ""
-        return tuple(i.strip().rstrip("/") for i in raw.split(",") if i.strip())
+    @property
+    def firebase_audience(self) -> str | None:
+        project = (self.firebase_project_id or "").strip()
+        return project or None
 
     # --- OpenAI (transcription + extraction) ---
     openai_api_key: str | None = None

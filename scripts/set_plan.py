@@ -46,7 +46,7 @@ async def list_accounts() -> None:
         rows = (
             await session.execute(
                 select(
-                    User.clerk_sub,
+                    User.auth_sub,
                     User.plan,
                     User.created_at,
                     select(func.count())
@@ -63,13 +63,13 @@ async def list_accounts() -> None:
         return
 
     print(f"{len(rows)} account(s):")
-    for clerk_sub, plan, created_at, active in rows:
-        print(f"  {plan:<5} {active:>3} active  {clerk_sub}  (since {created_at:%Y-%m-%d})")
+    for auth_sub, plan, created_at, active in rows:
+        print(f"  {plan:<5} {active:>3} active  {auth_sub}  (since {created_at:%Y-%m-%d})")
 
 
 async def find_user(session, sub: str | None, user_id: str | None) -> User | None:
     if sub:
-        return await session.scalar(select(User).where(User.clerk_sub == sub))
+        return await session.scalar(select(User).where(User.auth_sub == sub))
     try:
         uid = UUID(user_id)
     except (TypeError, ValueError):
@@ -100,12 +100,12 @@ async def set_plan(sub: str | None, user_id: str | None, plan: str) -> int:
         )
         before = user.plan
         if before == plan:
-            print(f"{user.clerk_sub}: already {plan} ({active} active trades). Nothing to do.")
+            print(f"{user.auth_sub}: already {plan} ({active} active trades). Nothing to do.")
             return 0
 
         user.plan = plan
         await session.commit()
-        print(f"{user.clerk_sub}: {before} -> {plan} ({active} active trades).")
+        print(f"{user.auth_sub}: {before} -> {plan} ({active} active trades).")
         print("The change is live on the user's next request; no redeploy needed.")
         return 0
 

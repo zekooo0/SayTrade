@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api import analytics, billing, me, notes, portfolios, trades
-from app.auth.jwks import HttpJwksFetcher
+from app.auth.jwks import FIREBASE_JWKS_URL, HttpJwksFetcher
 from app.billing.entitlements import Entitlements
 from app.config import settings
 from app.db import SessionLocal
@@ -85,16 +85,10 @@ app.add_middleware(
 
 # --- runtime wiring (tests override these app.state slots) ---
 app.state.settings = settings
-# One fetcher per configured issuer. With a single issuer this is the only one;
-# with two (a domain move) a token is checked against the keys of the instance
-# that actually minted it.
-app.state.jwks = (
-    HttpJwksFetcher(settings.clerk_issuers[0]) if settings.clerk_issuers else None
-)
-app.state.jwks_by_issuer = (
-    {issuer: HttpJwksFetcher(issuer) for issuer in settings.clerk_issuers}
-    if len(settings.clerk_issuers) > 1
-    else {}
+# Google publishes ONE key set for every Firebase project, so there is a single
+# fetcher; the project is proven by the token's issuer and audience instead.
+app.state.firebase_jwks = (
+    HttpJwksFetcher(FIREBASE_JWKS_URL) if settings.firebase_project_id else None
 )
 app.state.storage = CloudinaryStorage(
     cloud_name=settings.cloudinary_cloud_name or "",

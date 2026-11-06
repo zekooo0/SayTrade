@@ -57,6 +57,7 @@ async def update_portfolio(
         user,
         portfolio_id,
         name=payload.name,
+        exchange=payload.exchange,
         currency=payload.currency,
         capital=payload.capital,
         clear_capital=payload.clear_capital,

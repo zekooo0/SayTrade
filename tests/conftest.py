@@ -22,7 +22,7 @@ os.environ.setdefault(
     "DATABASE_URL",
     "postgresql+asyncpg://saytrade:saytrade@127.0.0.1:5432/saytrade_test",
 )
-os.environ.setdefault("CLERK_FRONTEND_API", "https://test.clerk.accounts.dev")
+os.environ.setdefault("FIREBASE_PROJECT_ID", "saytrade-test")
 # Exhaust the monthly voice guard quickly in tests, and use a small trade limit
 # so the suite opens three trades instead of ten. The production default (10) is
 # pinned in test_plan_limits.
@@ -50,7 +50,9 @@ from app.providers.lemonsqueezy import LemonSqueezyError  # noqa: E402
 from app.providers.transcription import TranscriptionResult  # noqa: E402
 from app.services.billing import BillingPolicy  # noqa: E402
 
-TEST_ISSUER = "https://test.clerk.accounts.dev"
+TEST_PROJECT = "saytrade-test"
+TEST_ISSUER = f"https://securetoken.google.com/{TEST_PROJECT}"
+TEST_AUDIENCE = TEST_PROJECT
 TEST_KID = "test-kid"
 
 # The signing secret the webhook checks against. The BILLING tests sign their own
@@ -77,12 +79,19 @@ def public_jwk():
     }
 
 
-def mint_token(sub: str, issuer: str = TEST_ISSUER, kid: str = TEST_KID, ttl_seconds: int = 3600) -> str:
+def mint_token(
+    sub: str,
+    issuer: str = TEST_ISSUER,
+    kid: str = TEST_KID,
+    ttl_seconds: int = 3600,
+    audience: str = TEST_AUDIENCE,
+) -> str:
     now = datetime.now(timezone.utc)
     return jwt.encode(
         {
             "sub": sub,
             "iss": issuer,
+            "aud": audience,
             "iat": now,
             "exp": now + timedelta(seconds=ttl_seconds),
         },
@@ -97,7 +106,7 @@ def auth_headers(sub: str = "user_test1") -> dict[str, str]:
 
 
 class FakeJwks:
-    async def get(self) -> dict:
+    async def get(self, force: bool = False) -> dict:
         return {"keys": [public_jwk()]}
 
 
@@ -436,7 +445,7 @@ def set_plan(sub: str, plan: str) -> None:
     async def _update() -> int:
         async with engine.begin() as conn:
             result = await conn.execute(
-                text("UPDATE users SET plan = :plan WHERE clerk_sub = :sub"),
+                text("UPDATE users SET plan = :plan WHERE auth_sub = :sub"),
                 {"plan": plan, "sub": sub},
             )
             return result.rowcount
@@ -463,7 +472,7 @@ def client():
     import asyncio
 
     asyncio.run(reset_database())
-    app.state.jwks = FakeJwks()
+    app.state.firebase_jwks = FakeJwks()
     app.state.storage = FakeStorage()
     app.state.transcriber = FakeTranscriber()
     app.state.extractor = FakeExtractor()

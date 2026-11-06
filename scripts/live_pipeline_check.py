@@ -52,9 +52,9 @@ async def main() -> None:
     )
 
     async with SessionLocal() as session:
-        user = await session.scalar(select(User).where(User.clerk_sub == PROBE_SUB))
+        user = await session.scalar(select(User).where(User.auth_sub == PROBE_SUB))
         if user is None:
-            user = User(clerk_sub=PROBE_SUB)
+            user = User(auth_sub=PROBE_SUB)
             session.add(user)
             await session.commit()
             await session.refresh(user)
@@ -81,7 +81,7 @@ async def main() -> None:
 async def cleanup() -> None:
     async with engine.begin() as conn:
         user_id = await conn.scalar(
-            text("SELECT id FROM users WHERE clerk_sub = :sub"), {"sub": PROBE_SUB}
+            text("SELECT id FROM users WHERE auth_sub = :sub"), {"sub": PROBE_SUB}
         )
         if user_id is None:
             print("\ncleanup: no probe user left")

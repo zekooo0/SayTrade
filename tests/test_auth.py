@@ -1,4 +1,4 @@
-"""Auth boundary: Clerk token verification and user provisioning."""
+"""Auth boundary: Firebase ID-token verification and user provisioning."""
 
 from conftest import TEST_ISSUER, auth_headers, mint_token, on_free
 
@@ -18,7 +18,23 @@ def test_expired_token_401(client):
 
 
 def test_wrong_issuer_401(client):
-    token = mint_token("user_x", issuer="https://evil.clerk.accounts.dev")
+    token = mint_token("user_x", issuer="https://evil.example.test")
+    assert client.get("/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+
+
+def test_wrong_audience_401(client):
+    """`aud` is load-bearing for Firebase.
+
+    Google publishes ONE key set for every Firebase project, so a valid signature
+    proves nothing about WHICH project minted the token. The audience is that
+    proof, and a token for another project must never reach a trader's journal.
+    """
+    token = mint_token("user_x", audience="some-other-project")
+    assert client.get("/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
+
+
+def test_token_with_no_audience_401(client):
+    token = mint_token("user_x", audience="")
     assert client.get("/me", headers={"Authorization": f"Bearer {token}"}).status_code == 401
 
 
@@ -27,13 +43,13 @@ def test_valid_token_provisions_user(client):
     assert first.status_code == 200
     user_id = first.json()["user_id"]
     second = client.get("/me", headers=auth_headers("user_a"))
-    assert second.json()["user_id"] == user_id  # same Clerk sub -> same identity
+    assert second.json()["user_id"] == user_id  # same subject -> same identity
     other = client.get("/me", headers=auth_headers("user_b"))
     assert other.json()["user_id"] != user_id
 
 
-def test_clerk_keys_unreachable_is_503_not_401(client, monkeypatch):
-    """A Clerk outage must not look like a bad session.
+def test_firebase_keys_unreachable_is_503_not_401(client, monkeypatch):
+    """A key-endpoint outage must not look like a bad session.
 
     Returning 401 would make the client discard a perfectly good session, so an
     unreachable JWKS endpoint is a 503.
@@ -42,9 +58,9 @@ def test_clerk_keys_unreachable_is_503_not_401(client, monkeypatch):
 
     class DeadFetcher:
         async def get(self):
-            raise httpx.ConnectError("clerk is unreachable")
+            raise httpx.ConnectError("google is unreachable")
 
-    monkeypatch.setattr(client.app.state, "jwks", DeadFetcher(), raising=False)
+    monkeypatch.setattr(client.app.state, "firebase_jwks", DeadFetcher(), raising=False)
 
     resp = client.get("/me", headers=auth_headers())
 
