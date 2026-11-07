@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import analytics, billing, me, notes, portfolios, trades
+from app.api import analytics, billing, me, notes, portfolios, trades, waitlist
 from app.auth.jwks import FIREBASE_JWKS_URL, HttpJwksFetcher
 from app.billing.entitlements import Entitlements
 from app.config import settings
@@ -185,3 +185,4 @@ app.include_router(me.router)
 app.include_router(portfolios.router)
 app.include_router(analytics.router)
 app.include_router(billing.router)
+app.include_router(waitlist.router)

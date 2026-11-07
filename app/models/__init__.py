@@ -8,6 +8,7 @@ from app.models.subscription import Subscription
 from app.models.symbol import Symbol, SymbolAlias
 from app.models.trade import Trade
 from app.models.user import User
+from app.models.waitlist import WaitlistSignup
 
 __all__ = [
     "CHANGE_KINDS",
@@ -24,4 +25,5 @@ __all__ = [
     "SymbolAlias",
     "Trade",
     "User",
+    "WaitlistSignup",
 ]

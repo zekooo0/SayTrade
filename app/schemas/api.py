@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 
 
 def d(dec: Decimal | None) -> str | None:
@@ -338,3 +338,10 @@ class BillingUrlView(BaseModel):
     """A payments URL for the client to open: a checkout, or the portal."""
 
     url: str
+
+
+class WaitlistIn(BaseModel):
+    """A public signup: an address, and optionally the page that earned it."""
+
+    email: EmailStr
+    source: str | None = Field(default=None, max_length=32)
