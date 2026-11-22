@@ -1,7 +1,7 @@
 """polar_subscriptions: the current provider's subscription rows
 
 Revision ID: 8f1e4d2c9a7b
-Revises: e7a1c9402f31
+Revises: a3f8c21d64be
 
 The emitted DDL, for review before it runs:
 
@@ -36,7 +36,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "8f1e4d2c9a7b"
-down_revision = "e7a1c9402f31"
+down_revision = "a3f8c21d64be"
 branch_labels = None
 depends_on = None
 
