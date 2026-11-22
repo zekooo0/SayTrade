@@ -67,7 +67,7 @@ Seven, all set. Secrets are marked `--secret` and cannot be read back:
 | `CLOUDINARY_CLOUD_NAME` | plain |
 | `CLOUDINARY_API_KEY` | secret |
 | `CLOUDINARY_API_SECRET` | secret |
-| `CORS_ORIGINS` | plain — `https://saytrade-web.vercel.app` |
+| `CORS_ORIGINS` | plain — `https://saytrade.app,https://saytrade-web.vercel.app,https://mark.saytrade.app` |
 
 Payments add five more, from the Polar dashboard (Settings » Personal access
 tokens, Products, and the webhook endpoint's signing secret):
@@ -272,6 +272,33 @@ Sign in, record a note, and confirm it reaches `EXTRACTED` or `APPROVED`, not
 ---
 
 ## Things worth knowing
+
+### ChartMark — the suite's charts instrument
+
+ChartMark's server side lives here now (commit "feat(chartmark): the charts
+instrument's server needs"). Three routes serve its browser studio:
+
+    POST /chartmark/ohlcv     routed, cached, normalized bars
+    GET  /chartmark/symbols   autocomplete (journal reference + live search)
+    POST /chartmark/brief     the Step 5 AI brief, metered by plan
+
+Two more env vars: `TWELVE_DATA_API_KEY` (US:/FX: series; a trader may send
+his own key as a header, this is the deployment default) and
+`CHARTMARK_FREE_AI_BRIEFS_PER_MONTH` (default 20, PRO unlimited). Its tables
+live in the `chartmark` schema of the one database.
+
+After the first deploy with this code, run the one-time subscriber import so
+a trader who bought Pro on ChartMark (and never opened the journal) still
+reads PRO:
+
+    DATABASE_URL="$(grep -m1 '^DATABASE_URL=' .env.neon | cut -d= -f2-)" \
+    CHARTMARK_DATABASE_URL="$(grep -m1 '^DATABASE_URL=' /home/zak/chartmark/.env.local | cut -d= -f2-)" \
+    uv run python scripts/import_chartmark_subscribers.py --dry-run   # then without
+
+`scripts/configure-suite.sh` sets every env var above (it reads the Polar and
+Twelve Data values from ChartMark's local `.env.local` — same account, same
+product, same secret) and deploys.
+
 
 - **The free API scales to zero.** The first request after an idle period pays a
   cold start. Hobby's minimum replicas are pinned at 0 and cannot be raised.
