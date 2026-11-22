@@ -18,6 +18,7 @@ import time
 
 from conftest import WEBHOOK_SECRET, auth_headers, on_free
 from app.main import app
+from app.services.billing import BillingPolicy
 
 
 _message_counter = itertools.count(1)
@@ -132,6 +133,41 @@ def test_the_webhook_refuses_a_replayed_timestamp(client):
     )
 
     assert response.status_code == 401
+
+
+def test_a_whsec_style_secret_verifies(client):
+    """Polar mints base64 `whsec_`/`polar_whs_` secrets, and this app's webhook
+    secret IS the shared ChartMark endpoint's — so the base64 path is the one
+    production exercises, not the literal-string fallback."""
+    import base64
+
+    key = b"raw-test-signing-key-material"
+    secret = "polar_whs_" + base64.b64encode(key).decode()
+    app.state.billing = BillingPolicy(
+        webhook_secret=secret,
+        product_ids=frozenset({"prod_test_monthly", "prod_test_yearly"}),
+    )
+    account = provision(client)
+    body = json.dumps(subscription_payload(account)).encode()
+    message_id = "msg_whsec"
+    timestamp = str(int(time.time()))
+    digest = hmac.new(
+        key, f"{message_id}.{timestamp}.".encode() + body, hashlib.sha256
+    ).digest()
+
+    response = client.post(
+        "/billing/webhook",
+        content=body,
+        headers={
+            "webhook-id": message_id,
+            "webhook-timestamp": timestamp,
+            "webhook-signature": f"v1,{base64.b64encode(digest).decode()}",
+            "Content-Type": "application/json",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert me(client)["plan"] == "PRO"
 
 
 def test_a_signed_subscription_grants_pro(client):
