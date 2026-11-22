@@ -29,7 +29,9 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 
 
 class CheckoutRequest(BaseModel):
-    """Which price to buy, and the address the receipt should reach.
+    """Which price to buy, the address the receipt should reach, and which
+    app's door the trader came from — the checkout returns him to the app he
+    started in, not to this backend's default.
 
     The product carries the price, so this picks one. The email is a courtesy
     and not an identity: the account link is the subject the API adds from the
@@ -38,6 +40,7 @@ class CheckoutRequest(BaseModel):
 
     period: Literal["monthly", "yearly"] = "monthly"
     email: str | None = None
+    source: Literal["journal", "chartmark"] = "journal"
 
     ALLOWED_PERIODS: ClassVar[tuple[str, ...]] = ("monthly", "yearly")
 
@@ -72,13 +75,19 @@ async def create_checkout(
     # The trader's own address, so the receipt reaches him and the provider
     # hides the field. Trimmed, and absent when the client sends nothing.
     email = (payload.email or "").strip() or None
+    # Back to the app he started in.
+    success_url = (
+        settings.polar_chartmark_success_url
+        if payload.source == "chartmark"
+        else settings.polar_success_url
+    )
     try:
         url = await client.create_checkout(
             user_id=str(user.id),
             auth_sub=user.auth_sub,
             period=payload.period,
             email=email,
-            success_url=settings.polar_success_url,
+            success_url=success_url,
         )
     except PolarError as exc:
         log.warning("checkout for %s failed: %s", user.id, exc)

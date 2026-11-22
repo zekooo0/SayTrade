@@ -352,6 +352,23 @@ def test_the_checkout_carries_the_account_and_the_period(client):
     assert call["success_url"] == "https://saytrade.app/trades"
 
 
+def test_the_checkout_returns_the_trader_to_the_app_he_started_in(client):
+    """One shared product, two front doors: a purchase made from the charts
+    studio must not land him in the journal."""
+    provision(client)
+
+    client.post(
+        "/billing/checkout",
+        headers=auth_headers(),
+        json={"period": "monthly", "source": "chartmark"},
+    )
+
+    assert (
+        app.state.polar.checkouts[-1]["success_url"]
+        == "https://mark.saytrade.app/studio"
+    )
+
+
 def test_the_checkout_defaults_to_monthly(client):
     provision(client)
 

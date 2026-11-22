@@ -71,8 +71,10 @@ class Settings(BaseSettings):
     # created at Polar. Empty means the webhook refuses every call, which is
     # the safe default.
     polar_webhook_secret: str | None = None
-    # Where the checkout returns the trader. The app's front door is the board.
+    # Where the checkout returns the trader. Each app in the suite has its own
+    # front door: the journal's is the board, the charts studio's is the studio.
     polar_success_url: str = "https://saytrade.app/trades"
+    polar_chartmark_success_url: str = "https://mark.saytrade.app/studio"
 
     # --- ChartMark (the suite's charts instrument) ---
     # The deterministic pipeline runs in the trader's browser; the API only
