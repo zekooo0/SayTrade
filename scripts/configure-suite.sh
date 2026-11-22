@@ -45,11 +45,11 @@ fi
 
 # The LemonSqueezy era's keys are inert now; remove them so nobody reads a
 # stale value by mistake.
-uv run fastapi cloud env rm LEMONSQUEEZY_API_KEY || true
-uv run fastapi cloud env rm LEMONSQUEEZY_STORE_ID || true
-uv run fastapi cloud env rm LEMONSQUEEZY_VARIANT_MONTHLY || true
-uv run fastapi cloud env rm LEMONSQUEEZY_VARIANT_YEARLY || true
-uv run fastapi cloud env rm LEMONSQUEEZY_WEBHOOK_SECRET || true
+uv run fastapi cloud env delete LEMONSQUEEZY_API_KEY || true
+uv run fastapi cloud env delete LEMONSQUEEZY_STORE_ID || true
+uv run fastapi cloud env delete LEMONSQUEEZY_VARIANT_MONTHLY || true
+uv run fastapi cloud env delete LEMONSQUEEZY_VARIANT_YEARLY || true
+uv run fastapi cloud env delete LEMONSQUEEZY_WEBHOOK_SECRET || true
 
 # Setting a variable does not redeploy — this does.
 uv run fastapi deploy
