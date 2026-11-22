@@ -69,16 +69,20 @@ Seven, all set. Secrets are marked `--secret` and cannot be read back:
 | `CLOUDINARY_API_SECRET` | secret |
 | `CORS_ORIGINS` | plain — `https://saytrade-web.vercel.app` |
 
-Payments add six more, from the LemonSqueezy dashboard (Settings » API keys, and
-the webhook's signing secret):
+Payments add five more, from the Polar dashboard (Settings » Personal access
+tokens, Products, and the webhook endpoint's signing secret):
 
 | Key | Kind |
 | --- | --- |
-| `LEMONSQUEEZY_API_KEY` | secret — the LIVE key |
-| `LEMONSQUEEZY_STORE_ID` | plain |
-| `LEMONSQUEEZY_VARIANT_MONTHLY` | plain — the monthly variant id |
-| `LEMONSQUEEZY_VARIANT_YEARLY` | plain — the yearly variant id |
-| `LEMONSQUEEZY_WEBHOOK_SECRET` | secret — the webhook's signing secret |
+| `POLAR_ACCESS_TOKEN` | secret — the LIVE access token |
+| `POLAR_SERVER` | plain — `production` (or `sandbox` to rehearse) |
+| `POLAR_PRO_MONTHLY_PRODUCT_ID` | plain — the monthly product id |
+| `POLAR_PRO_YEARLY_PRODUCT_ID` | plain — the yearly product id |
+| `POLAR_WEBHOOK_SECRET` | secret — the webhook endpoint's signing secret (`whsec_…` / `polar_whs_…`) |
+
+The webhook endpoint at Polar points at `POST /billing/webhook` on this API,
+subscribed to the subscription events, and `POLAR_SUCCESS_URL` (default
+`https://saytrade.app/trades`) is where the hosted checkout returns the trader.
 
 While `LEMONSQUEEZY_API_KEY` is empty, payments are off: `POST /billing/checkout`
 answers 503 and the app keeps saying "Pro is coming". Leave

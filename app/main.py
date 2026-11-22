@@ -30,7 +30,7 @@ from app.db import SessionLocal
 from app.domain.errors import DomainError
 from app.log import get_logger, setup as setup_logging
 from app.providers.extraction import OpenAIExtractor
-from app.providers.lemonsqueezy import LemonSqueezyClient
+from app.providers.polar import PolarClient
 from app.providers.storage import CloudinaryStorage
 from app.providers.summary import OpenAISummarizer
 from app.providers.transcription import OpenAITranscriber
@@ -120,26 +120,31 @@ app.state.summarizer = OpenAISummarizer(
     model=settings.openai_extraction_model,
 )
 app.state.entitlements = Entitlements.from_settings(settings)
-# Payments. The client is None until a key and a store are configured, and the
-# checkout route answers 503 while it is None — so a half-configured deployment
-# keeps saying "Pro is coming" instead of offering a button that cannot work.
-app.state.lemonsqueezy = (
-    LemonSqueezyClient(
-        api_key=settings.lemonsqueezy_api_key,
-        store_id=settings.lemonsqueezy_store_id,
-        variants={
-            "monthly": settings.lemonsqueezy_variant_monthly or "",
-            "yearly": settings.lemonsqueezy_variant_yearly or "",
+# Payments. The client is None until a token and a product are configured, and
+# the checkout route answers 503 while it is None — so a half-configured
+# deployment keeps saying "Pro is coming" instead of offering a button that
+# cannot work.
+app.state.polar = (
+    PolarClient(
+        access_token=settings.polar_access_token or "",
+        server=settings.polar_server,
+        products={
+            "monthly": settings.polar_pro_monthly_product_id or "",
+            "yearly": settings.polar_pro_yearly_product_id or "",
         },
     )
-    if settings.lemonsqueezy_api_key and settings.lemonsqueezy_store_id
+    if settings.polar_access_token
+    and (settings.polar_pro_monthly_product_id or settings.polar_pro_yearly_product_id)
     else None
 )
-# What the webhook accepts: the signing secret, and whether a test-mode purchase
-# may write a plan on this deployment.
+# What the webhook accepts: the signing secret, and the products this
+# deployment sells — an event for anything else is ignored, so a stray
+# endpoint can never write a plan here.
 app.state.billing = BillingPolicy(
-    webhook_secret=settings.lemonsqueezy_webhook_secret or "",
-    test_mode=settings.lemonsqueezy_test_mode,
+    webhook_secret=settings.polar_webhook_secret or "",
+    product_ids=frozenset(
+        p for p in (settings.polar_pro_monthly_product_id, settings.polar_pro_yearly_product_id) if p
+    ),
 )
 # Background processing needs its own session per note, independent of the
 # request session that created it.
@@ -151,7 +156,7 @@ log.info(
     settings.openai_extraction_model,
     settings.openai_extraction_model,
     settings.openai_transcription_model,
-    "lemonsqueezy" if app.state.lemonsqueezy else "off",
+    "polar" if app.state.polar else "off",
     settings.log_level,
 )
 
