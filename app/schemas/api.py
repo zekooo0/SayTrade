@@ -247,11 +247,26 @@ class UsageView(BaseModel):
     period_end: datetime
 
 
+class ChartmarkUsageView(BaseModel):
+    """What the suite's charts instrument allows, and what is used.
+
+    `None` limits are unlimited (PRO). The count is rows, not a counter,
+    so it can never disagree with reality.
+    """
+
+    ai_briefs_used: int
+    ai_briefs_limit: int | None
+
+
 class MeView(BaseModel):
     user_id: UUID
     plan: str = "FREE"
     usage: UsageView
     entitlements: dict[str, Any] = Field(default_factory=dict)
+    # What the suite's charts instrument (ChartMark) allows on this plan. The
+    # journal's own client ignores it; ChartMark's studio reads it once per
+    # session, the same way it reads the plan.
+    chartmark: ChartmarkUsageView | None = None
 
 
 class PortfolioView(BaseModel):

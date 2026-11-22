@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from app.api import (
     analytics,
     billing,
+    chartmark,
     me,
     notes,
     portfolios,
@@ -30,6 +31,7 @@ from app.db import SessionLocal
 from app.domain.errors import DomainError
 from app.log import get_logger, setup as setup_logging
 from app.providers.extraction import OpenAIExtractor
+from app.providers.briefs import OpenAIBriefWriter
 from app.providers.polar import PolarClient
 from app.providers.storage import CloudinaryStorage
 from app.providers.summary import OpenAISummarizer
@@ -119,6 +121,17 @@ app.state.summarizer = OpenAISummarizer(
     api_key=settings.openai_api_key or "",
     model=settings.openai_extraction_model,
 )
+# ChartMark's one AI call: the Step 5 brief, grounded in the deterministic
+# output the studio computed in the browser. Same key, same model family as
+# the extractor.
+app.state.brief_writer = (
+    OpenAIBriefWriter(
+        api_key=settings.openai_api_key or "",
+        model=settings.openai_extraction_model,
+    )
+    if settings.openai_api_key
+    else None
+)
 app.state.entitlements = Entitlements.from_settings(settings)
 # Payments. The client is None until a token and a product are configured, and
 # the checkout route answers 503 while it is None — so a half-configured
@@ -201,5 +214,6 @@ app.include_router(portfolios.router)
 app.include_router(analytics.router)
 app.include_router(predictions.router)
 app.include_router(reviews.router)
+app.include_router(chartmark.router)
 app.include_router(billing.router)
 app.include_router(waitlist.router)

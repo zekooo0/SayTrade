@@ -74,6 +74,19 @@ class Settings(BaseSettings):
     # Where the checkout returns the trader. The app's front door is the board.
     polar_success_url: str = "https://saytrade.app/trades"
 
+    # --- ChartMark (the suite's charts instrument) ---
+    # The deterministic pipeline runs in the trader's browser; the API only
+    # serves its data and its one AI call.
+    #
+    # Twelve Data serves US: and FX: series and symbol search. A trader may
+    # bring his own key (the studio sends it as a header); this one is the
+    # deployment's default.
+    twelve_data_api_key: str | None = None
+    # FREE holds a monthly AI-brief allowance (an abuse guard, like the voice
+    # notes); PRO is unlimited (None is not used here — the limit is only
+    # applied to FREE plans).
+    chartmark_free_ai_briefs_per_month: int = 20
+
     # --- Image intake limits ---
     # A screenshot of a broker screen. 8 MB covers a phone screenshot at full
     # size; the app sends a copy capped to 1280px on its long edge, so a real

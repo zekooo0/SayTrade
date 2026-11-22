@@ -23,6 +23,8 @@ os.environ.setdefault(
     "postgresql+asyncpg://saytrade:saytrade@127.0.0.1:5432/saytrade_test",
 )
 os.environ.setdefault("FIREBASE_PROJECT_ID", "saytrade-test")
+# A small AI-brief allowance so the metering tests exhaust it in two briefs.
+os.environ.setdefault("CHARTMARK_FREE_AI_BRIEFS_PER_MONTH", "2")
 # Exhaust the monthly voice guard quickly in tests, and use a small trade limit
 # so the suite opens three trades instead of ten. The production default (10) is
 # pinned in test_plan_limits.
@@ -313,6 +315,32 @@ class FakePolar:
         )
 
 
+class FakeBriefWriter:
+    """Stands in for the Step 5 model.
+
+    Returns a commentary shaped exactly like the contract, counts its calls,
+    and can be made to refuse — so a test can prove the metering ran before
+    any AI spend.
+    """
+
+    def __init__(self):
+        self.calls: list[dict] = []
+        self.fail = False
+        self.model = "fake-brief-model"
+
+    async def write(self, brief: dict) -> dict:
+        if self.fail:
+            raise RuntimeError("simulated brief outage")
+        self.calls.append(dict(brief))
+        return {
+            "headline": "NVDA intact; the floor is the Last Bottom.",
+            "structure_summary": "The swing rose from the trough to the peak.",
+            "key_levels_notes": ["Floor holds.", "Buffer above it.", "Peak above."],
+            "invalidation_plan": "A close below the floor breaks the trend.",
+            "risk_context": "Wick basis, ten-bar reaction span.",
+        }
+
+
 class FakeSummarizer:
     """Stands in for the summary model.
 
@@ -372,7 +400,8 @@ async def reset_database() -> None:
         await conn.execute(
             text(
                 "TRUNCATE changes, notes, trades, portfolios, subscriptions, users, waitlist, "
-                "weekly_reviews "
+                "weekly_reviews, polar_subscriptions, "
+                "chartmark.ohlcv_cache, chartmark.ai_briefs "
                 "RESTART IDENTITY CASCADE"
             )
         )
@@ -488,6 +517,10 @@ def client():
     # so a test that does not care about the wording still gets a real summary.
     # A test that cares installs a FakeSummarizer with use_summarizer().
     app.state.summarizer = None
+    # ChartMark's AI call: a fake writer, so no test reaches OpenAI. The
+    # metering (count of chartmark.ai_briefs rows) is real, which is the part
+    # the tests assert.
+    app.state.brief_writer = FakeBriefWriter()
     app.state.entitlements = Entitlements(
         free_active_trades=3,
         free_voice_notes_per_month=2,
