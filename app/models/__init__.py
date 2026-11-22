@@ -9,6 +9,7 @@ from app.models.symbol import Symbol, SymbolAlias
 from app.models.trade import Trade
 from app.models.user import User
 from app.models.waitlist import WaitlistSignup
+from app.models.weekly_review import WeeklyReview
 
 __all__ = [
     "CHANGE_KINDS",
@@ -26,4 +27,5 @@ __all__ = [
     "Trade",
     "User",
     "WaitlistSignup",
+    "WeeklyReview",
 ]

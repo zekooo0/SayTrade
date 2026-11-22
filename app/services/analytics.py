@@ -12,6 +12,13 @@ Two honesty rules, both load-bearing:
 - An unpriced sale is not a zero. Those trades are counted in
   ``unpriced_trades`` and kept out of the money statistics.
 
+One window rule: `period` filters the CLOSED trades the performance figures are
+computed from, by their close date. It deliberately does not touch `open_trades`
+(a position is current state, not a period event) and it does not touch the
+journal habit (a streak is also a current fact). Both are reported as they are,
+and `period` / `period_start` echo what was asked so the client never has to
+remember.
+
 And one scope rule: the WHOLE view is one market. When the caller names a
 market, every figure — the counts, the money, the R statistics, the prediction
 accuracy and the habit — covers that market's trades and that market's notes,
@@ -58,6 +65,8 @@ R_BUCKETS: list[tuple[str, Decimal | None, Decimal | None, bool]] = [
     ("3R or more", Decimal("3"), None, False),
 ]
 WEEKS_SHOWN = 12
+# The windows a caller may name. "all" is the shipped behaviour and the default.
+PERIOD_DAYS: dict[str, int | None] = {"7d": 7, "30d": 30, "90d": 90, "all": None}
 
 
 def _week_start(day: date) -> date:
@@ -98,7 +107,10 @@ def _drawdown(curve: list[Decimal]) -> Decimal | None:
 
 
 async def overview(
-    session: AsyncSession, user: User, portfolio_id: UUID | None = None
+    session: AsyncSession,
+    user: User,
+    portfolio_id: UUID | None = None,
+    period: str = "all",
 ) -> AnalyticsView:
     """The scoreboard.
 
@@ -106,13 +118,20 @@ async def overview(
     its money. A trader with two books must never see one book's win rate under
     the other's name. With no market named, every market is added together —
     the caller's choice, and only honest when they share a currency.
+
+    ``period`` keeps only the trades CLOSED inside the window. An unknown value
+    is treated as "all": the router already refuses one, and a service called
+    from a script should not explode over a label.
     """
+    window = period if period in PERIOD_DAYS else "all"
+    days = PERIOD_DAYS[window]
+    since = datetime.now(timezone.utc) - timedelta(days=days) if days else None
+
     query = select(Trade).where(Trade.user_id == user.id)
     if portfolio_id is not None:
         query = query.where(Trade.portfolio_id == portfolio_id)
     trades = list(await session.scalars(query))
-    view = AnalyticsView()
-    view.total_trades = len(trades)
+    view = AnalyticsView(period=window, period_start=since)
 
     if portfolio_id is not None:
         market = await session.get(Portfolio, portfolio_id)
@@ -133,7 +152,11 @@ async def overview(
             session, trade, capital=capitals.get(trade.portfolio_id)
         )
         if summary.is_open:
+            # A position is current state: the window does not hide one.
             view.open_trades += 1
+            continue
+        if since is not None and (summary.closed_at is None or summary.closed_at < since):
+            # Closed before the window opened. Out of every figure below.
             continue
         view.closed_trades += 1
         rows.append(
@@ -155,6 +178,10 @@ async def overview(
                 "has_stop": summary.initial_stop is not None,
             }
         )
+
+    # The count the caller can check against the two blocks above: the window's
+    # closed trades plus the positions still open.
+    view.total_trades = view.closed_trades + view.open_trades
 
     # --- every figure below is money, so it uses the priced trades ---
     # The market filter was applied to the query above: this list is one book,
@@ -238,10 +265,16 @@ async def overview(
         view.expectancy_r = d(_mean(rs))
     view.average_win_r = d(_mean(wins_r))
     view.average_loss_r = d(_mean(losses_r))
+    # The sum, not the mean: "5.9R in total" is what a trader names. None when
+    # nothing in the window is rated — a total of no trades is not a zero.
+    if rs:
+        view.total_r = d(q4(sum(rs, ZERO)))
 
     # --- stop discipline ---
     breaches = sorted((row for row in rated if row["r"] < BEYOND_STOP), key=lambda r: r["r"])
     view.beyond_stop = len(breaches)
+    # Counted here so no client subtracts: rated trades minus the breaches.
+    view.stops_held = len(rated) - len(breaches)
     view.beyond_stop_trades = [
         StopBreach(
             trade_id=row["id"],
@@ -333,6 +366,10 @@ async def _habit(
     ]
 
     days = {note.created_at.date() for note in notes}
+    # The same twelve weeks the weekly buckets cover, so the dots and the bars
+    # describe one window. Newest last: a client draws them in that order.
+    window_start = today - timedelta(weeks=WEEKS_SHOWN)
+    view.journaled_days = sorted(day.isoformat() for day in days if day >= window_start)
     cursor = today if today in days else today - timedelta(days=1)
     streak = 0
     while cursor in days:

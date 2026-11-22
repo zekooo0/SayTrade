@@ -1,5 +1,6 @@
 """Analytics endpoint: the scoreboard."""
 
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,6 +18,7 @@ router = APIRouter(tags=["analytics"])
 @router.get("/analytics", response_model=AnalyticsView)
 async def analytics(
     portfolio_id: UUID | None = None,
+    period: Literal["7d", "30d", "90d", "all"] = "all",
     session: AsyncSession = Depends(get_session),
     user: User = Depends(current_user),
 ):
@@ -27,6 +29,9 @@ async def analytics(
     R statistics and the habit ignore it: they carry no currency. Without it,
     every market is added together, which is what the trades board's caller and
     the existing tests expect.
+
+    ``period`` keeps only the trades CLOSED inside the window — 7d, 30d, 90d or
+    all. A bad value is a 422 from the type, never a silently ignored window.
     """
     if portfolio_id is not None:
         market = await session.get(Portfolio, portfolio_id)
@@ -34,4 +39,6 @@ async def analytics(
             # A market id that is not yours is not found, never empty: a trader
             # must not be able to tell an empty market from somebody else's.
             raise HTTPException(status_code=404, detail="Market not found")
-    return await analytics_service.overview(session, user, portfolio_id=portfolio_id)
+    return await analytics_service.overview(
+        session, user, portfolio_id=portfolio_id, period=period
+    )

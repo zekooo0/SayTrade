@@ -14,7 +14,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Prediction, Trade, User
-from app.schemas.api import PredictionAccuracyView, d
+from app.schemas.api import PredictionAccuracyView, PredictionRowView, d
 
 # Under this many judged predictions the number says nothing. The analytics page
 # already applies the same rule to the win rate: state the sample size, and say
@@ -59,6 +59,45 @@ async def accuracy(
     if judged:
         view.accuracy = round(correct / judged, 4)
     return view
+
+
+async def list_predictions(
+    session: AsyncSession,
+    user: User,
+    portfolio_id: UUID | None = None,
+    limit: int = 50,
+) -> list[PredictionRowView]:
+    """The trader's predictions, newest first, each with its trade's symbol.
+
+    One query with a join, not one query per prediction. The symbol and the close
+    date come from the TRADE, because the prediction row stores neither: it names
+    a trade and a level, and the trade says what the level was about.
+    """
+    query = (
+        select(Prediction, Trade)
+        .join(Trade, Trade.id == Prediction.trade_id)
+        .where(Prediction.user_id == user.id)
+        .order_by(Prediction.created_at.desc())
+        .limit(limit)
+    )
+    if portfolio_id is not None:
+        query = query.where(Trade.portfolio_id == portfolio_id)
+
+    rows = (await session.execute(query)).all()
+    return [
+        PredictionRowView(
+            trade_id=trade.id,
+            symbol=trade.symbol,
+            level=d(prediction.level),
+            direction=prediction.direction,
+            reason=prediction.reason,
+            result=prediction.result,
+            resolved_at=prediction.resolved_at,
+            trade_closed_at=trade.closed_at,
+            created_at=prediction.created_at,
+        )
+        for prediction, trade in rows
+    ]
 
 
 async def accuracy_for_trades(

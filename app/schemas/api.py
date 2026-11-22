@@ -4,7 +4,7 @@ Decimals are always serialized as strings so clients never incur float drift
 on prices or share counts.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import UUID
@@ -107,6 +107,80 @@ class PredictionView(BaseModel):
     reason: str | None = None
     result: str = "PENDING"
     resolved_at: datetime | None = None
+
+
+class ReviewNoteView(BaseModel):
+    """One note that landed inside the reviewed week.
+
+    The summary is the API's own line, written from the change rows — never a
+    fresh model call. "From your notes" is therefore a list of sentences the
+    trader has already seen on their trades.
+    """
+
+    id: UUID
+    summary: str | None = None
+    created_at: datetime
+
+
+class ReviewView(BaseModel):
+    """One week, as the review screen draws it.
+
+    The numbers are derived on read from the change rows, so a review can never
+    disagree with the journal. `commitment` is this week's own sentence (absent
+    until the week is finished); `active_commitment` is the most recent one the
+    trader wrote, which is the sentence Today shows.
+    """
+
+    week_start: date
+    week_end: date
+    week_number: int
+
+    completed: bool = False
+    commitment: str | None = None
+    active_commitment: str | None = None
+    # Consecutive finished weeks, ending at the most recent one.
+    streak_weeks: int = 0
+
+    trades_closed: int = 0
+    rated_trades: int = 0
+    stops_held: int = 0
+    net_r: str | None = None
+
+    notes: list[ReviewNoteView] = Field(default_factory=list)
+
+
+class ReviewIn(BaseModel):
+    """The one sentence a finished review carries.
+
+    `week_start` is optional and defaults to the LAST completed week: a review is
+    written about a week that has ended. A date in the future, or a date that is
+    not a Monday, is a 422 rather than a guessed row.
+    """
+
+    commitment: str = Field(min_length=1, max_length=400)
+    week_start: date | None = None
+
+
+class PredictionRowView(BaseModel):
+    """One prediction, with the trade it was said about.
+
+    The Predictions page lists these. The accuracy above them is the same
+    `prediction_accuracy` block the scoreboard reports, so the summary and the
+    history can never tell different stories.
+    """
+
+    trade_id: UUID
+    symbol: str
+    level: str | None = None
+    direction: str | None = None
+    reason: str | None = None
+    result: str = "PENDING"
+    resolved_at: datetime | None = None
+    # When the trade closed, which is when the trader said this. "Said when
+    # closing ORWE · 24 Oct" needs a date, and the prediction row does not carry
+    # one of its own.
+    trade_closed_at: datetime | None = None
+    created_at: datetime
 
 
 class TradeSummaryView(BaseModel):
@@ -278,6 +352,12 @@ class AnalyticsView(BaseModel):
     breakeven: int = 0
     win_rate: float | None = None
 
+    # The window the closed-trade figures cover: "7d" | "30d" | "90d" | "all".
+    # It is echoed so a client never has to remember what it asked for, and
+    # `period_start` is the exact instant the window began (None for "all").
+    period: str = "all"
+    period_start: datetime | None = None
+
     # How often the trader's predictions about what happens next were right.
     # Beside the win rate, never merged with it: a losing trade can carry a
     # correct prediction, and that is the point of measuring it separately.
@@ -314,10 +394,16 @@ class AnalyticsView(BaseModel):
     average_loss_r: str | None = None
     win_rate_r: float | None = None
     expectancy_r: str | None = None
+    # The sum of the R multiples in the window — "+5.9R in total". None when no
+    # trade in the window is rated, because a total of nothing is not zero.
+    total_r: str | None = None
 
     # --- stop discipline ---
     beyond_stop: int = 0
     beyond_stop_trades: list[StopBreach] = Field(default_factory=list)
+    # The other side of `beyond_stop`, counted HERE rather than subtracted by a
+    # client: a screen that does the subtraction can disagree with the list.
+    stops_held: int = 0
 
     # --- the journal habit ---
     notes_total: int = 0
@@ -327,6 +413,10 @@ class AnalyticsView(BaseModel):
     observation_notes: int = 0
     note_streak_days: int = 0
     notes_per_week: list[WeekBucket] = Field(default_factory=list)
+    # The UTC days that carry at least one note, inside the habit's own window
+    # (`notes_per_week`'s twelve weeks). The client draws the dots; it never
+    # decides which day had a note.
+    journaled_days: list[str] = Field(default_factory=list)
 
     # --- series ---
     equity_curve: list[EquityPoint] = Field(default_factory=list)

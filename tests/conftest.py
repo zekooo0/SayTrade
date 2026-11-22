@@ -364,7 +364,8 @@ async def reset_database() -> None:
     async with engine.begin() as conn:
         await conn.execute(
             text(
-                "TRUNCATE changes, notes, trades, portfolios, subscriptions, users, waitlist "
+                "TRUNCATE changes, notes, trades, portfolios, subscriptions, users, waitlist, "
+                "weekly_reviews "
                 "RESTART IDENTITY CASCADE"
             )
         )

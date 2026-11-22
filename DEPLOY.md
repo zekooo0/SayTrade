@@ -106,7 +106,7 @@ cannot run at boot. Run it **from the machine** against Neon:
 cd backend/sayTrade
 NEON_URL=$(grep -m1 '^DATABASE_URL=' .env.neon | cut -d= -f2- | tr -d '"')
 DATABASE_URL="$NEON_URL" ./.venv/bin/alembic upgrade head
-DATABASE_URL="$NEON_URL" ./.venv/bin/alembic current      # expect d5e2c7a1b930 (head)
+DATABASE_URL="$NEON_URL" ./.venv/bin/alembic current      # expect a3f8c21d64be (head)
 ```
 
 `alembic/env.py` takes the URL from `settings.database_url`, and a real
