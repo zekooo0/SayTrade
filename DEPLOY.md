@@ -80,9 +80,16 @@ tokens, Products, and the webhook endpoint's signing secret):
 | `POLAR_PRO_YEARLY_PRODUCT_ID` | plain — the yearly product id |
 | `POLAR_WEBHOOK_SECRET` | secret — the webhook endpoint's signing secret (`whsec_…` / `polar_whs_…`) |
 
-The webhook endpoint at Polar points at `POST /billing/webhook` on this API,
-subscribed to the subscription events, and `POLAR_SUCCESS_URL` (default
-`https://saytrade.app/trades`) is where the hosted checkout returns the trader.
+The webhook is ChartMark's own endpoint — `https://mark.saytrade.app/api/webhooks/polar`
+— which relays every verified event to this API's `POST /billing/webhook`
+with Polar's original Standard Webhooks headers. `POLAR_WEBHOOK_SECRET` is
+therefore the SAME secret as ChartMark's endpoint (read from ChartMark's
+`.env.local` by `scripts/configure-polar.sh`), and no second endpoint is
+registered at Polar. A relay failure answers 500 to Polar, so Polar's
+per-endpoint retries cover this API too; a delivery this API refuses means
+its secret has drifted from ChartMark's endpoint's.
+`POLAR_SUCCESS_URL` (default `https://saytrade.app/trades`) is where the
+hosted checkout returns the trader.
 
 While `LEMONSQUEEZY_API_KEY` is empty, payments are off: `POST /billing/checkout`
 answers 503 and the app keeps saying "Pro is coming". Leave
