@@ -27,10 +27,6 @@ os.environ.setdefault("FIREBASE_PROJECT_ID", "saytrade-test")
 # so the suite opens three trades instead of ten. The production default (10) is
 # pinned in test_plan_limits.
 os.environ.setdefault("FREE_VOICE_NOTES_PER_MONTH", "2")
-# The payments switch is PINNED, never inherited: a developer's rehearsal .env
-# carries LEMONSQUEEZY_TEST_MODE=true, and the checkout route would then mint a
-# rehearsal checkout while the tests assert production behaviour.
-os.environ["LEMONSQUEEZY_TEST_MODE"] = "false"
 # The suite must never post to Sentry: a test run is not a production incident.
 # Set outright rather than with setdefault — an empty DSN is the switch, and a
 # value inherited from the shell must not be able to turn reporting back on.
@@ -46,7 +42,7 @@ from app.billing.entitlements import Entitlements  # noqa: E402
 from app.db import engine  # noqa: E402
 from app.main import app  # noqa: E402
 from app.providers.extraction import ExtractionResult  # noqa: E402
-from app.providers.lemonsqueezy import LemonSqueezyError  # noqa: E402
+from app.providers.polar import PolarError  # noqa: E402
 from app.providers.transcription import TranscriptionResult  # noqa: E402
 from app.services.billing import BillingPolicy  # noqa: E402
 
@@ -262,48 +258,59 @@ class FakeExtractor:
         )
 
 
-class FakeLemonSqueezy:
+class FakePolar:
     """Stands in for the payment provider's API.
 
-    Records what it was asked, so a test can prove the account id and the variant
-    reached the call, and answers a subscription whose portal link the portal
-    route reads back. ``fail`` makes it refuse, which must reach the client as a
-    503 and never as a silent success.
+    Records what it was asked, so a test can prove the account id and the
+    product reached the call, and answers a portal link the portal route reads
+    back. ``fail`` makes it refuse, which must reach the client as a 503 and
+    never as a silent success.
     """
 
     def __init__(self):
         self.checkouts: list[dict] = []
-        self.subscriptions: dict[str, dict] = {}
+        self.portal_calls: list[dict] = []
         self.fail = False
 
     async def create_checkout(
         self,
         *,
         user_id: str,
+        auth_sub: str,
         period: str,
-        redirect_url: str,
-        test_mode: bool,
-        email: str | None = None,
+        email: str | None,
+        success_url: str,
     ) -> str:
         if self.fail:
-            raise LemonSqueezyError("simulated provider outage")
+            raise PolarError("simulated provider outage")
         self.checkouts.append(
             {
                 "user_id": user_id,
+                "auth_sub": auth_sub,
                 "period": period,
-                "redirect_url": redirect_url,
-                "test_mode": test_mode,
                 "email": email,
+                "success_url": success_url,
             }
         )
-        return f"https://fake-store.lemonsqueezy.com/checkout/buy/{period}-{user_id}"
+        return f"https://fake.polar.sh/checkout/{period}-{user_id}"
 
-    async def get_subscription(self, subscription_id: str) -> dict:
+    async def create_customer_portal(
+        self,
+        *,
+        customer_id: str | None = None,
+        external_customer_id: str | None = None,
+    ) -> str:
         if self.fail:
-            raise LemonSqueezyError("simulated provider outage")
-        if subscription_id not in self.subscriptions:
-            raise LemonSqueezyError(f"no subscription {subscription_id}")
-        return self.subscriptions[subscription_id]
+            raise PolarError("simulated provider outage")
+        self.portal_calls.append(
+            {
+                "customer_id": customer_id,
+                "external_customer_id": external_customer_id,
+            }
+        )
+        return (
+            f"https://fake.polar.sh/portal/{customer_id or external_customer_id}"
+        )
 
 
 class FakeSummarizer:
@@ -486,11 +493,14 @@ def client():
         pro_active_trades=None,
         pro_voice_notes_per_month=None,
     )
-    # Payments: a fake provider, so no test reaches LemonSqueezy. The webhook
-    # secret is a fixed test value that the billing tests sign their payloads
-    # with — the signature check itself is never faked.
-    app.state.lemonsqueezy = FakeLemonSqueezy()
-    app.state.billing = BillingPolicy(webhook_secret=WEBHOOK_SECRET, test_mode=False)
+    # Payments: a fake provider, so no test reaches Polar. The webhook secret
+    # is a fixed test value that the billing tests sign their payloads with —
+    # the signature check itself is never faked.
+    app.state.polar = FakePolar()
+    app.state.billing = BillingPolicy(
+        webhook_secret=WEBHOOK_SECRET,
+        product_ids=frozenset({"prod_test_monthly", "prod_test_yearly"}),
+    )
     with TestClient(app) as test_client:
         yield test_client
 

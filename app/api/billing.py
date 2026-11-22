@@ -6,7 +6,8 @@ GET  /billing/portal    the provider's own page for managing this subscription
 """
 
 import json
-from typing import Literal
+
+from typing import ClassVar, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
@@ -17,8 +18,8 @@ from app.auth.deps import current_user
 from app.db import get_session
 from app.domain.errors import BillingUnavailableError
 from app.log import get_logger
-from app.models import Subscription, User
-from app.providers.lemonsqueezy import LemonSqueezyError
+from app.models import PolarSubscription, User
+from app.providers.polar import PolarError
 from app.schemas.api import BillingUrlView
 from app.services import billing as billing_service
 
@@ -30,18 +31,20 @@ router = APIRouter(prefix="/billing", tags=["billing"])
 class CheckoutRequest(BaseModel):
     """Which price to buy, and the address the receipt should reach.
 
-    The variant carries the price, so this picks one. The email is a courtesy and
-    not an identity: the account link is the id the API adds from the verified
-    session, so a wrong address misroutes a receipt and nothing else.
+    The product carries the price, so this picks one. The email is a courtesy
+    and not an identity: the account link is the subject the API adds from the
+    verified session, so a wrong address misroutes a receipt and nothing else.
     """
 
     period: Literal["monthly", "yearly"] = "monthly"
     email: str | None = None
 
+    ALLOWED_PERIODS: ClassVar[tuple[str, ...]] = ("monthly", "yearly")
+
 
 def _client(request: Request):
     """The provider client, or a clear 503 when payments are not configured."""
-    client = getattr(request.app.state, "lemonsqueezy", None)
+    client = getattr(request.app.state, "polar", None)
     if client is None:
         raise BillingUnavailableError(
             "Payments are not open yet on this deployment."
@@ -55,25 +58,29 @@ async def create_checkout(
     payload: CheckoutRequest,
     user: User = Depends(current_user),
 ) -> BillingUrlView:
-    """Make a checkout for THIS trader and return the link to open.
+    """Make a checkout for THIS trader and return the link to open it.
 
-    The account id travels with the checkout, so the payment that follows is
-    tied to this account and to no other.
+    The account travels with the checkout — as the metadata Polar echoes into
+    the webhook, and as the customer's external id — so the payment that
+    follows is tied to this account and to no other.
     """
+    if payload.period not in CheckoutRequest.ALLOWED_PERIODS:
+        raise HTTPException(status_code=400, detail="Unknown billing period.")
+
     client = _client(request)
     settings = request.app.state.settings
-    # The trader's own address, so the receipt reaches him and the provider hides
-    # the field. Trimmed, and absent when the client sends nothing.
+    # The trader's own address, so the receipt reaches him and the provider
+    # hides the field. Trimmed, and absent when the client sends nothing.
     email = (payload.email or "").strip() or None
     try:
         url = await client.create_checkout(
             user_id=str(user.id),
+            auth_sub=user.auth_sub,
             period=payload.period,
-            redirect_url=settings.lemonsqueezy_redirect_url,
-            test_mode=settings.lemonsqueezy_test_mode,
             email=email,
+            success_url=settings.polar_success_url,
         )
-    except LemonSqueezyError as exc:
+    except PolarError as exc:
         log.warning("checkout for %s failed: %s", user.id, exc)
         raise BillingUnavailableError(
             "The payment provider could not be reached. Try again in a moment."
@@ -89,17 +96,23 @@ async def webhook(
     """Take the provider's report and write the plan it describes.
 
     No session is required and none is read: the trader is not here. The
-    signature over the raw body is what proves the call came from the provider.
+    Standard Webhooks signature over the raw body is what proves the call came
+    from the provider.
     """
     raw_body = await request.body()
     policy = request.app.state.billing
-    signature = request.headers.get("X-Signature", "")
 
-    if not billing_service.verify_signature(
-        raw_body, signature, policy.webhook_secret
-    ):
-        log.warning("refused: webhook signature")
-        raise HTTPException(status_code=401, detail="Invalid signature")
+    try:
+        billing_service.verify_signature(
+            raw_body,
+            webhook_id=request.headers.get("webhook-id", ""),
+            webhook_timestamp=request.headers.get("webhook-timestamp", ""),
+            webhook_signature=request.headers.get("webhook-signature", ""),
+            secret=policy.webhook_secret,
+        )
+    except billing_service.WebhookSignatureError as exc:
+        log.warning("refused: %s", exc)
+        raise HTTPException(status_code=401, detail="Invalid signature") from exc
 
     try:
         payload = json.loads(raw_body)
@@ -112,12 +125,15 @@ async def webhook(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if event is None:
-        # An order or an invoice, or a type this app does not act on. Answer 200
-        # so the provider stops retrying a call there is nothing to do with.
+        # An order or an invoice, or a type this app does not act on. Answer
+        # 200 so the provider stops retrying a call there is nothing to do with.
         return {"status": "ignored"}
 
     if not policy.accepts(event):
-        log.info("ignored: a test-mode event on a live deployment")
+        log.info(
+            "ignored: a subscription for a product this app does not sell (%s)",
+            event.polar_product_id,
+        )
         return {"status": "ignored"}
 
     try:
@@ -127,7 +143,7 @@ async def webhook(
 
     log.info(
         "billing: subscription %s is %s -> %s",
-        event.ls_subscription_id,
+        event.polar_subscription_id,
         event.status,
         user.plan,
     )
@@ -147,9 +163,9 @@ async def billing_portal(
     """
     client = _client(request)
     row = await session.scalar(
-        select(Subscription)
-        .where(Subscription.user_id == user.id)
-        .order_by(Subscription.created_at.desc())
+        select(PolarSubscription)
+        .where(PolarSubscription.user_id == user.id)
+        .order_by(PolarSubscription.created_at.desc())
         .limit(1)
     )
     if row is None:
@@ -158,16 +174,13 @@ async def billing_portal(
         )
 
     try:
-        attributes = await client.get_subscription(row.ls_subscription_id)
-    except LemonSqueezyError as exc:
-        log.warning("portal for %s failed: %s", row.ls_subscription_id, exc)
+        url = await client.create_customer_portal(
+            customer_id=row.polar_customer_id,
+            external_customer_id=user.auth_sub,
+        )
+    except PolarError as exc:
+        log.warning("portal for %s failed: %s", user.id, exc)
         raise BillingUnavailableError(
             "The payment provider could not be reached. Try again in a moment."
         ) from exc
-
-    url = (attributes.get("urls") or {}).get("customer_portal")
-    if not url:
-        raise BillingUnavailableError(
-            "The payment provider returned no management link."
-        )
-    return BillingUrlView(url=str(url))
+    return BillingUrlView(url=url)

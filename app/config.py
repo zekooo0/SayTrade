@@ -54,27 +54,25 @@ class Settings(BaseSettings):
     pro_active_trades: int | None = None
     pro_voice_notes_per_month: int | None = None
 
-    # --- LemonSqueezy (payments) ---
-    # The seller of record: it takes the payment, the sales tax and the refund,
-    # and it owns the PRICE. No price lives in this file — a second copy of a
-    # number would disagree with the one on the checkout page.
+    # --- Polar (payments) ---
+    # The merchant of record: it takes the payment, the sales tax and the
+    # refund, and it owns the PRICE. No price lives in this file — a second
+    # copy of a number would disagree with the one on the checkout page.
     #
-    # An empty key means no checkout: POST /billing/checkout answers 503, and the
-    # app goes on saying Pro is coming.
-    lemonsqueezy_api_key: str | None = None
-    lemonsqueezy_store_id: str | None = None
-    # One variant is one price. Both variants grant the same plan; the billing
+    # An empty token means no checkout: POST /billing/checkout answers 503,
+    # and the app goes on saying Pro is coming.
+    polar_server: str = "production"  # "sandbox" rehearses, "production" sells
+    polar_access_token: str | None = None
+    # One product is one price. Both products grant the same plan; the billing
     # period is the only difference.
-    lemonsqueezy_variant_monthly: str | None = None
-    lemonsqueezy_variant_yearly: str | None = None
-    # The signing secret of the webhook, set when the webhook is created. Empty
-    # means the webhook refuses every call, which is the safe default.
-    lemonsqueezy_webhook_secret: str | None = None
-    # Accept a test-mode purchase. True while rehearsing, FALSE in production:
-    # a rehearsal must never grant a real plan.
-    lemonsqueezy_test_mode: bool = False
+    polar_pro_monthly_product_id: str | None = None
+    polar_pro_yearly_product_id: str | None = None
+    # The signing secret of the webhook, set when the webhook endpoint is
+    # created at Polar. Empty means the webhook refuses every call, which is
+    # the safe default.
+    polar_webhook_secret: str | None = None
     # Where the checkout returns the trader. The app's front door is the board.
-    lemonsqueezy_redirect_url: str = "https://saytrade.app/trades"
+    polar_success_url: str = "https://saytrade.app/trades"
 
     # --- Image intake limits ---
     # A screenshot of a broker screen. 8 MB covers a phone screenshot at full
