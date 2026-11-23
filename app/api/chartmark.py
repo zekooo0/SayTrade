@@ -14,7 +14,7 @@ The keys are camelCase, matching the studio client's existing shapes.
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.deps import current_user
@@ -37,7 +37,10 @@ SAMPLE_TICKERS = ("EGX_ORAS", "US_NVDA", "FX_XAUUSD_BROKEN")
 class OhlcvRequest(BaseModel):
     ticker: str = Field(default="SAMPLE:EGX_ORAS", min_length=1, max_length=64)
     timeframe: Literal["4H", "1D", "1W"] = "1D"
-    force_refresh: bool = False
+    force_refresh: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("forceRefresh", "force_refresh"),
+    )
 
 
 def _sample_catalog() -> list[dict]:

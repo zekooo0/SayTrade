@@ -160,7 +160,8 @@ async def yahoo_fetch_candles(
 
     params: dict[str, str] = {"interval": interval, "includePrePost": "false"}
     if start_ms is not None and math.isfinite(start_ms):
-        params["period1"] = str(max(0, int(start_ms // 1000) - 86_400))
+        lookback_sec = 7 * 86_400 if timeframe == "1W" else 86_400
+        params["period1"] = str(max(0, int(start_ms // 1000) - lookback_sec))
         params["period2"] = str(int(time.time()))
     else:
         params["range"] = range_
@@ -214,11 +215,10 @@ async def yahoo_fetch_candles(
         )
 
     normalized = aggregate_to_4h(raw) if timeframe == "4H" else normalize_candles(raw)
-    completed = filter_completed_candles(normalized, timeframe)
 
     meta = result.get("meta") or {}
     return {
-        "candles": completed if completed else normalized,
+        "candles": normalized,
         "provider_symbol": meta.get("symbol") or yahoo_symbol,
         "currency": meta.get("currency"),
         "exchange_name": meta.get("exchangeName"),
@@ -332,11 +332,10 @@ async def twelvedata_fetch_candles(
             continue
 
     normalized = normalize_candles(raw)
-    completed = filter_completed_candles(normalized, timeframe)
 
     meta = payload.get("meta") or {}
     return {
-        "candles": completed if completed else normalized,
+        "candles": normalized,
         "provider_symbol": meta.get("symbol") or td_symbol,
         "currency": meta.get("currency") or meta.get("currency_quote"),
         "exchange_name": meta.get("exchange") or ("FOREX" if market == "FX" else "US"),

@@ -210,6 +210,23 @@ def test_a_new_closed_bar_is_appended_incrementally():
     assert [c["timestamp"] for c in res["candles"]] == [1_000_000, 2_000_000]
 
 
+def test_incremental_merge_updates_latest_bar_in_place():
+    """An updated close on the latest bar replaces the stale cached bar."""
+    existing = [_candle(1_000_000, 100.0), _candle(2_000_000, 105.0)]
+    incoming = [_candle(2_000_000, 112.5)]
+    merged, appended = chartmark.merge_incremental_candles(existing, incoming)
+    assert appended == 0
+    assert [c.timestamp for c in merged] == [1_000_000, 2_000_000]
+    assert merged[-1].close == 112.5
+
+
+def test_ohlcv_request_accepts_camel_case_force_refresh():
+    from app.api.chartmark import OhlcvRequest
+
+    req = OhlcvRequest.model_validate({"ticker": "INDEX:SPX", "timeframe": "1D", "forceRefresh": True})
+    assert req.force_refresh is True
+
+
 def test_an_unreachable_provider_serves_the_cache_with_a_warning():
     provider = FakeProvider([_candle(1_000_000)])
 

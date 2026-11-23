@@ -72,24 +72,21 @@ def parse_market_ticker(raw: str) -> ParsedTicker:
     )
 
 
-# How long a cached series stays fresh before we check the provider for a
-# newly closed bar. A bar must ALSO possibly have closed (2x the bar length).
+# How long a cached series stays fresh before we incrementally check the
+# provider for a new bar or an updated latest candle (intraday -> close).
 _SESSION_CHECK_INTERVAL_MS = {
-    "4H": 30 * 60 * 1000,
-    "1D": 4 * 60 * 60 * 1000,
-    "1W": 12 * 60 * 60 * 1000,
+    "4H": 5 * 60 * 1000,   # 5 minutes
+    "1D": 15 * 60 * 1000,  # 15 minutes
+    "1W": 30 * 60 * 1000,  # 30 minutes
 }
 
 
 def _should_check_for_new_bar(
     entry: ChartmarkOhlcvCache, now_ms: int
 ) -> bool:
-    duration = ohlcv.bar_duration_ms(entry.timeframe)
-    next_bar_could_be_closed = entry.last_candle_timestamp + duration * 2 <= now_ms
-    elapsed = (now_ms - _entry_checked_ms(entry)) >= _SESSION_CHECK_INTERVAL_MS[
+    return (now_ms - _entry_checked_ms(entry)) >= _SESSION_CHECK_INTERVAL_MS[
         entry.timeframe
     ]
-    return next_bar_could_be_closed and elapsed
 
 
 def _entry_checked_ms(entry: ChartmarkOhlcvCache) -> int:
@@ -144,13 +141,14 @@ def _dicts_to_candles(rows: list[dict[str, Any]]) -> list[ohlcv.Candle]:
 def merge_incremental_candles(
     existing: list[ohlcv.Candle], incoming: list[ohlcv.Candle]
 ) -> tuple[list[ohlcv.Candle], int]:
-    """Append only bars newer than the last one served."""
+    """Append newer bars and refresh the latest bar in place (e.g., intraday -> close)."""
     base = ohlcv.normalize_candles(existing)
     last_ts = base[-1].timestamp if base else -(2**63)
-    newer = [c for c in ohlcv.normalize_candles(incoming) if c.timestamp > last_ts]
-    if not newer:
+    updates = [c for c in ohlcv.normalize_candles(incoming) if c.timestamp >= last_ts]
+    if not updates:
         return base, 0
-    return ohlcv.normalize_candles([*base, *newer]), len(newer)
+    appended = sum(1 for c in updates if c.timestamp > last_ts)
+    return ohlcv.normalize_candles([*base, *updates]), appended
 
 
 async def _fetch_from_provider(
