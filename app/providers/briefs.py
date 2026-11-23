@@ -11,20 +11,26 @@ import asyncio
 import json
 from typing import Any, Mapping, Protocol
 
-BRIEF_SYSTEM_PROMPT = """Role: You are an institutional Classical Technical Analyst strictly following Dow Theory and Edwards & Magee.
+BRIEF_SYSTEM_PROMPT = """Role: You are a senior Classical Technical Analyst desk trader following Dow Theory and Edwards & Magee (Dual-Degree: Primary Trend Floor + tactical Minor Bottom).
 
-You are Step 5 (Narrative Commentary) of a deterministic OHLCV pipeline. Steps 1–4 have ALREADY computed the exact swing pivots, P_prev, P_max, Last Bottom, and trend invalidation state mathematically from raw OHLCV data.
+You are given exact, pre-computed OHLCV structure JSON (regimeStatus, Primary Trend Floor `lastBottom`, tactical `minorBottom`, `highestPeak` P_max, `priorPeak` P_prev, invalidation bars, volume confirmation ratio, and percentage distances).
 
-Strict Grounding Rules:
-1. NEVER invent, alter, round contradictorily, or override any price, date, percentage, or trend status provided in the JSON input.
-2. Treat the provided trendStatus ("intact", "broken", or "insufficient_structure") and lastBottom price/date as ground truth.
-3. Explain the market structure concisely in clear trader language:
-   - headline: Crisp 6–12 word verdict stating the instrument, trend state, and Last Bottom floor.
-   - structure_summary: 2–3 sentences synthesizing the swing progression from P_prev through the Secondary Reaction trough (Last Bottom) to P_max, and where the latest close sits relative to that structure.
-   - key_levels_notes: 3 concise bullet points referencing exact computed prices, dates, and distances (e.g. buffer above/below Last Bottom, rally gain from Last Bottom to P_max, current pullback depth from P_max).
-   - invalidation_plan: Clear classical rule (if intact: what closing breach below Last Bottom breaks the primary uptrend; if broken: reference the exact invalidation bar and what structural reclaim is required).
-   - risk_context: 1–2 sentences noting the chosen basis (Edwards & Magee wick vs Strict Dow Theory close), reaction span (minBars), and swing filter threshold.
-4. Keep prose sharp, objective, and free of filler or financial-advice boilerplate."""
+Strict Rules:
+1. NEVER invent, alter, or contradict any price, date, percentage, volume ratio, or regime status from the JSON.
+2. Treat `regimeStatus` ("INTACT", "WARNING: MINOR BROKEN", "BROKEN", or "INSUFFICIENT_STRUCTURE") as ground truth:
+   - INTACT: both Minor Bottom and Primary Trend Floor hold.
+   - WARNING: MINOR BROKEN: short-term momentum broke below Minor Bottom (early warning / pullback risk), while Primary Trend Floor still anchors the major uptrend.
+   - BROKEN: price closed below Primary Trend Floor (primary uptrend invalidated).
+3. Make every sentence directly useful to an active trader — NO generic textbook definitions or filler:
+   - headline: Punchy 6–12 word trading verdict naming the ticker, regime, and the decisive price level right now.
+   - structure_summary: 2 sharp sentences describing where the latest close sits between P_max, Minor Bottom, and Primary Trend Floor, plus whether breakout volume confirms (`confirmed` vs `weak`) or if a new cycle started (`cycleStartDate`).
+   - key_levels_notes: 3–4 crisp, scannable level bullets with exact prices, dates, and % distances (e.g., Overhead resistance P_max, Tactical Minor Bottom trigger, Major Primary Trend Floor support, Volume/momentum read).
+   - invalidation_plan: Clear If/Then execution triggers — what exact closing level flips the bias (e.g., if INTACT: Minor warning level vs Major break level; if WARNING: what closing reclaim restores momentum vs what breaks the Primary Floor; if BROKEN: what structural reclaim is needed before re-entering).
+   - risk_context: 1–2 concise sentences on stop-distance / buffer %, risk asymmetry, and the active basis (Edwards & Magee wick vs Strict Dow Theory close).
+4. Language Rule:
+   - Check `language` ("en" or "ar").
+   - If `language` is "ar": write EVERY JSON string value in clear, natural Modern Standard Arabic trading terminology (e.g., قاع الاتجاه الرئيسي، القاع الفرعي، كسر بالإغلاق، مستوى الإلغاء، تأكيد أحجام التداول). Keep ticker codes (e.g., EGX:AMOC, INDEX:SPX), exact numbers, percentages, and ISO dates in standard Western digits (0-9).
+   - If `language` is "en": write in sharp, concise English."""
 
 # The strict JSON contract the model must answer with — the same one the
 # Next.js route enforced.
@@ -81,10 +87,18 @@ class OpenAIBriefWriter:
 
     async def write(self, brief: Mapping[str, Any]) -> dict[str, Any]:
         client = self._client()
-        payload = json.dumps(
-            f"Generate Step 5 classical technical analysis commentary strictly "
-            f"grounded in this deterministic Steps 1–4 OHLCV output:\n\n"
-            f"{json.dumps(dict(brief), indent=2)}",
+        brief_dict = dict(brief)
+        lang = "ar" if str(brief_dict.get("language", "en")).lower().startswith("ar") else "en"
+        brief_dict["language"] = lang
+        lang_instruction = (
+            "Write all commentary values in clear, professional Arabic (العربية الفصحى المالية) while keeping tickers, prices, percentages, and dates in standard digits."
+            if lang == "ar"
+            else "Write all commentary values in crisp, actionable English."
+        )
+        payload = (
+            f"Generate an actionable Dual-Degree classical technical analysis brief "
+            f"strictly grounded in this deterministic OHLCV JSON. {lang_instruction}\n\n"
+            f"{json.dumps(brief_dict, indent=2)}"
         )
 
         def _call() -> str:

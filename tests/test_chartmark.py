@@ -394,6 +394,17 @@ def test_a_pro_account_briefs_without_a_cap(client):
     assert plate["ai_briefs_used"] == 3
 
 
+def test_brief_request_accepts_language_toggle():
+    from app.api.chartmark import BriefRequest
+
+    default_req = BriefRequest.model_validate({"brief": {"ticker": "US:NVDA"}})
+    ar_req = BriefRequest.model_validate({"language": "ar", "brief": {"ticker": "US:NVDA"}})
+    en_req = BriefRequest.model_validate({"language": "en", "brief": {"ticker": "US:NVDA"}})
+    assert default_req.language is None
+    assert ar_req.language == "ar"
+    assert en_req.language == "en"
+
+
 def test_me_carries_the_chartmark_plate(client):
     on_free(client, "user_test1")
 

@@ -167,6 +167,7 @@ class BriefRequest(BaseModel):
     grounded in this and never recomputes a figure."""
 
     brief: dict[str, Any]
+    language: Literal["en", "ar"] | None = None
 
 
 @router.post("/brief")
@@ -202,7 +203,10 @@ async def brief(
     from app.providers.briefs import BriefWriterError
 
     try:
-        commentary = await writer.write(payload.brief)
+        brief_input = dict(payload.brief)
+        if payload.language:
+            brief_input["language"] = payload.language
+        commentary = await writer.write(brief_input)
     except BriefWriterError as exc:
         log.warning("brief refused: %s", exc)
         raise HTTPException(status_code=502, detail=str(exc)) from exc
