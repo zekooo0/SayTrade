@@ -390,6 +390,34 @@ def test_the_checkout_carries_the_traders_email(client):
     assert app.state.polar.checkouts[-1]["email"] == "trader@example.com"
 
 
+def test_the_checkout_forwards_the_traders_public_ip_for_currency_geo(client):
+    """Polar picks local currency (e.g. EGP in Egypt) from customer_ip_address."""
+    provision(client)
+
+    client.post(
+        "/billing/checkout",
+        headers={
+            **auth_headers(),
+            "x-forwarded-for": "41.44.123.45, 10.0.0.2",
+        },
+        json={"period": "monthly"},
+    )
+
+    assert app.state.polar.checkouts[-1]["customer_ip_address"] == "41.44.123.45"
+
+
+def test_the_checkout_omits_private_or_loopback_ips(client):
+    provision(client)
+
+    client.post(
+        "/billing/checkout",
+        headers={**auth_headers(), "x-forwarded-for": "127.0.0.1, 10.0.0.5"},
+        json={"period": "monthly"},
+    )
+
+    assert app.state.polar.checkouts[-1]["customer_ip_address"] is None
+
+
 def test_the_checkout_works_without_an_email(client):
     """A client that sends none is not refused: the provider then asks for it."""
     provision(client)

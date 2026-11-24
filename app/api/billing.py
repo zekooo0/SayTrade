@@ -5,6 +5,7 @@ POST /billing/webhook   the provider's report (no session: the SIGNATURE is the 
 GET  /billing/portal    the provider's own page for managing this subscription
 """
 
+import ipaddress
 import json
 
 from typing import ClassVar, Literal
@@ -55,6 +56,59 @@ def _client(request: Request):
     return client
 
 
+def _parse_public_ip(raw: str | None) -> str | None:
+    """Return a canonical public IPv4/IPv6 string, or None for private/invalid values."""
+    if not raw:
+        return None
+    candidate = raw.strip()
+    if not candidate:
+        return None
+    # Strip optional brackets ([::1]:443) or IPv4 :port suffix from proxy headers.
+    if candidate.startswith("["):
+        end = candidate.find("]")
+        if end != -1:
+            candidate = candidate[1:end]
+    elif candidate.count(":") == 1:
+        host, maybe_port = candidate.rsplit(":", 1)
+        if maybe_port.isdigit():
+            candidate = host
+    try:
+        ip = ipaddress.ip_address(candidate)
+    except ValueError:
+        return None
+    if not ip.is_global:
+        return None
+    return str(ip)
+
+
+def _extract_client_ip(request: Request) -> str | None:
+    """Best-effort public IP of the trader calling POST /billing/checkout.
+
+    Forwarding this to Polar as `customer_ip_address` lets Polar geolocate the
+    trader (e.g. showing EGP in Egypt) instead of geolocating the backend server.
+    """
+    for header in ("cf-connecting-ip", "true-client-ip", "fly-client-ip"):
+        ip = _parse_public_ip(request.headers.get(header))
+        if ip:
+            return ip
+
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if forwarded_for:
+        for part in forwarded_for.split(","):
+            ip = _parse_public_ip(part)
+            if ip:
+                return ip
+
+    for header in ("x-real-ip",):
+        ip = _parse_public_ip(request.headers.get(header))
+        if ip:
+            return ip
+
+    if request.client:
+        return _parse_public_ip(request.client.host)
+    return None
+
+
 @router.post("/checkout", response_model=BillingUrlView)
 async def create_checkout(
     request: Request,
@@ -75,6 +129,7 @@ async def create_checkout(
     # The trader's own address, so the receipt reaches him and the provider
     # hides the field. Trimmed, and absent when the client sends nothing.
     email = (payload.email or "").strip() or None
+    customer_ip_address = _extract_client_ip(request)
     # Back to the app he started in.
     success_url = (
         settings.polar_chartmark_success_url
@@ -88,6 +143,7 @@ async def create_checkout(
             period=payload.period,
             email=email,
             success_url=success_url,
+            customer_ip_address=customer_ip_address,
         )
     except PolarError as exc:
         log.warning("checkout for %s failed: %s", user.id, exc)

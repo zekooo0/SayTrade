@@ -282,6 +282,7 @@ class FakePolar:
         period: str,
         email: str | None,
         success_url: str,
+        customer_ip_address: str | None = None,
     ) -> str:
         if self.fail:
             raise PolarError("simulated provider outage")
@@ -292,6 +293,7 @@ class FakePolar:
                 "period": period,
                 "email": email,
                 "success_url": success_url,
+                "customer_ip_address": customer_ip_address,
             }
         )
         return f"https://fake.polar.sh/checkout/{period}-{user_id}"

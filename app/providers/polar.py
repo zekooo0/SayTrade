@@ -94,6 +94,7 @@ class PolarClient:
         period: str,
         email: str | None,
         success_url: str,
+        customer_ip_address: str | None = None,
     ) -> str:
         """A hosted checkout for THIS trader, and the link to open it.
 
@@ -101,6 +102,9 @@ class PolarClient:
         customer record is the trader's, and the portal works later), and in
         the checkout `metadata` (so the webhook can resolve the account even
         before Polar has a customer for it).
+
+        `customer_ip_address` forwards the trader's own IP so Polar resolves
+        local currency (e.g. EGP in Egypt) instead of geolocating this server.
         """
         body: dict = {
             "products": [self._product_id(period)],
@@ -114,6 +118,8 @@ class PolarClient:
         }
         if email:
             body["customer_email"] = email
+        if customer_ip_address:
+            body["customer_ip_address"] = customer_ip_address
 
         data = await self._post("/v1/checkouts/", body)
         url = data.get("url")
