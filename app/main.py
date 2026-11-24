@@ -16,6 +16,7 @@ from app.api import (
     analytics,
     billing,
     chartmark,
+    community,
     me,
     notes,
     portfolios,
@@ -215,5 +216,6 @@ app.include_router(analytics.router)
 app.include_router(predictions.router)
 app.include_router(reviews.router)
 app.include_router(chartmark.router)
+app.include_router(community.router)
 app.include_router(billing.router)
 app.include_router(waitlist.router)

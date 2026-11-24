@@ -40,3 +40,32 @@ async def current_user(
         raise HTTPException(status_code=401, detail=str(exc)) from exc
 
     return await provision_user(session, claims["sub"])
+
+
+async def optional_user(
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+) -> User | None:
+    """Resolve the signed-in user when a valid Bearer token is present, or
+    return None for public visitors browsing read-only community routes."""
+    authorization = request.headers.get("Authorization", "")
+    if not authorization.startswith("Bearer "):
+        return None
+
+    token = authorization.removeprefix("Bearer ").strip()
+    if not token:
+        return None
+
+    settings = request.app.state.settings
+    issuer = settings.firebase_issuer
+    audience = settings.firebase_audience
+    fetcher = getattr(request.app.state, "firebase_jwks", None)
+    if not issuer or not audience or fetcher is None:
+        return None
+
+    try:
+        claims = await verify_firebase_token(token, fetcher, issuer, audience)
+    except AuthError:
+        return None
+
+    return await provision_user(session, claims["sub"])

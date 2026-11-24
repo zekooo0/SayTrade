@@ -11,9 +11,11 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     DateTime,
+    Float,
     ForeignKey,
     Index,
     String,
+    Text,
     UniqueConstraint,
     Uuid,
     func,
@@ -102,6 +104,108 @@ class ChartmarkAIBrief(Base):
         Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
 
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CommunitySetup(Base):
+    """A deterministic ChartMark setup published by a trader to the shared
+    SayTrade + ChartMark community feed."""
+
+    __tablename__ = "community_setups"
+    __table_args__ = (
+        Index(
+            "ix_community_setups_created_at",
+            text("created_at DESC"),
+        ),
+        Index(
+            "ix_community_setups_market_created_at",
+            "market",
+            text("created_at DESC"),
+        ),
+        {"schema": CHARTMARK_SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        server_default=text("uuidv7()"),
+    )
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    author_name: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    canonical_ticker: Mapped[str] = mapped_column(String(48), nullable=False)
+    market: Mapped[str] = mapped_column(String(16), nullable=False)
+    timeframe: Mapped[str] = mapped_column(String(8), nullable=False)
+    regime_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    price_basis: Mapped[str] = mapped_column(String(12), nullable=False, default="wick")
+
+    latest_close: Mapped[float] = mapped_column(Float, nullable=False)
+    primary_floor_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    primary_floor_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    minor_bottom_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    minor_bottom_date: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    highest_peak_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    thesis: Mapped[str] = mapped_column(Text, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CommunitySetupVote(Base):
+    """One upvote per (setup, trader). Toggling deletes or inserts the row."""
+
+    __tablename__ = "community_setup_votes"
+    __table_args__ = ({"schema": CHARTMARK_SCHEMA},)
+
+    setup_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey(f"{CHARTMARK_SCHEMA}.community_setups.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class CommunitySetupComment(Base):
+    """A reply under a published community setup."""
+
+    __tablename__ = "community_setup_comments"
+    __table_args__ = (
+        Index(
+            "ix_community_setup_comments_setup_created_at",
+            "setup_id",
+            "created_at",
+        ),
+        {"schema": CHARTMARK_SCHEMA},
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        primary_key=True,
+        server_default=text("uuidv7()"),
+    )
+    setup_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey(f"{CHARTMARK_SCHEMA}.community_setups.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id"), nullable=False
+    )
+    author_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
